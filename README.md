@@ -1,10 +1,18 @@
 # Confidential stablecoin swap
 
-Wrap USDC, USDT, and CASH 1:1 and send them with native Token-2022 confidential transfers. Each asset has its own wrapper.
+A local prototype for converting USDC, USDT, and CASH into confidential tokens and back. Built with Solana Token Wrap and native Token-2022 confidential transfers.
 
-Runs on local Surfpool with copies of mainnet mints. All transactions stay local.
+Runs on Surfpool with copies of mainnet mints. All transactions stay local.
 
 ![Confidential stablecoin swap UI](assets/screenshot.png)
+
+## How it works
+
+1. Converting holds the original tokens in escrow and mints an equal amount of wrapped tokens. The app deposits those into your confidential balance.
+2. Sending uses native Token-2022 confidential transfers. The recipient adds incoming funds to their spendable balance.
+3. Converting back withdraws from the confidential balance, burns the wrapped tokens, and releases the original tokens from escrow.
+
+Each asset has its own wrapper. You can redeem wrapped USDC for USDC, not USDT or CASH. Transfer amounts and confidential balances are encrypted; addresses, timing, deposits, and redemptions remain public.
 
 ## Setup
 
@@ -63,11 +71,10 @@ The roundtrip wraps, deposits, sends, withdraws, and unwraps all three assets, t
 
 ## Limits
 
-- This project has not been audited. Upstream audits do not cover this app or establish the safety of this deployment.
-- [The local deployment check](research/local-deployment.json) compares the deployed program with the local artifact. It does not establish a reproducible build.
+- This project has not been independently audited or formally verified. It is a local prototype.
+- The vendored wrapper revision and local changes are recorded in [PROVENANCE.json](vendor/PROVENANCE.json). Upstream audits do not establish the safety of this app or deployment.
 - USDC and USDT mint copies retain issuer freeze controls. CASH retains its permanent delegate. The wrappers also retain freeze controls.
 - Local funding uses a development-only cheatcode endpoint on the localhost app.
-- Confidential amounts and balances are encrypted. Addresses, timing, wrapping, deposits, withdrawals, and redemptions remain public.
 
 ## License
 

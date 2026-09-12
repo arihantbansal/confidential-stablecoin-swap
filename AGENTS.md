@@ -22,4 +22,4 @@
 
 ## References
 
-Use the README for setup, usage, and limitations. Check `vendor/PROVENANCE.json` and the recorded results in `research/` before making audit or deployment-verification claims.
+Use the README for setup, usage, and limitations. Check `vendor/PROVENANCE.json` for the upstream revision and local changes. Support audit and deployment-verification claims with evidence for the exact build.
