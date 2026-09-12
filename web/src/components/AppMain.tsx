@@ -22,7 +22,7 @@ export function AppMain({
   const connectedAddress = connection?.session.owner ?? "";
 
   return (
-    <main className="mx-auto w-full max-w-[452px] space-y-3 px-4 py-6">
+    <main className="mx-auto w-full max-w-[452px] self-start space-y-3 px-4 py-6 sm:self-center">
       {state.manifestError ? (
         <div role="alert" className="rounded-xl border px-5 py-4 text-sm">
           <p>{state.manifestError}</p>

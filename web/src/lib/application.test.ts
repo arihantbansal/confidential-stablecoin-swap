@@ -199,10 +199,7 @@ describe("application controller", () => {
     expect(application.getSnapshot().connection).toBeNull();
     statusResponses.push([{ err: null, confirmationStatus: "confirmed" }]);
     await application.checkStatus();
-    expect(application.getSnapshot().result).toMatchObject({
-      unresolved: [],
-      confirmed: ["signature-1"],
-    });
+    expect(application.getSnapshot().result).toBeNull();
   });
   it.each(["confirmed", "unresolved"] as const)(
     "keeps a late %s receipt when disconnect happens during a send",
@@ -241,22 +238,23 @@ describe("application controller", () => {
       if (outcome === "unresolved") {
         statusResponses.push([{ err: null, confirmationStatus: "confirmed" }]);
         await application.checkStatus();
-        expect(application.getSnapshot().result?.confirmed).toEqual([
-          "late-signature",
-        ]);
+        expect(application.getSnapshot().result).toBeNull();
       }
     },
   );
-  it("shows success once through the persistent receipt", async () => {
+  it("shows successful transactions as a toast without a receipt card", async () => {
     const application = await connectedApplication();
     const { toast } = await import("sonner");
     engineApi.convert.mockResolvedValueOnce(["confirmed-signature"]);
     expect(await application.submit("convert", 1n, "")).toBe(true);
-    expect(application.getSnapshot().result?.confirmed).toEqual([
-      "confirmed-signature",
-    ]);
+    expect(application.getSnapshot().result).toBeNull();
     expect(application.getSnapshot().status).toBeNull();
-    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.success).toHaveBeenCalledWith(
+      "Made 1 USDC confidential",
+      expect.objectContaining({
+        action: expect.objectContaining({ label: "View transaction" }),
+      }),
+    );
   });
   it.each([
     [{ tokensAdded: false, solAdded: false }, null],

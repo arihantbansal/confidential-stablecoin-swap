@@ -1,6 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { OperationResult } from "@/lib/application";
+import { transactionUrl } from "@/lib/explorer";
 
 export function TransactionResult({
   result,
@@ -31,7 +32,7 @@ export function TransactionResult({
                 <p className="font-medium">{label}</p>
                 <a
                   className="inline-block underline underline-offset-4"
-                  href={`https://explorer.solana.com/tx/${signature}?${new URLSearchParams({ cluster: "custom", customUrl: "http://127.0.0.1:8899" })}`}
+                  href={transactionUrl(signature)}
                   target="_blank"
                   rel="noopener noreferrer"
                   aria-label={`${label}: view transaction ${index + 1}`}

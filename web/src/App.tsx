@@ -11,7 +11,7 @@ export function App() {
     state.busy || (state.result?.unresolved.length ?? 0) > 0;
 
   return (
-    <div className="min-h-dvh">
+    <div className="grid min-h-dvh grid-rows-[auto_1fr]">
       <AppHeader
         connected={connected}
         address={address}

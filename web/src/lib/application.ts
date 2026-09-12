@@ -6,6 +6,7 @@ import {
 import { toast } from "sonner";
 import { formatBaseUnits } from "@/lib/amounts";
 import type { BalanceView, Progress } from "@/lib/engine";
+import { transactionUrl } from "@/lib/explorer";
 import {
   type LocalAsset,
   type LocalManifest,
@@ -108,6 +109,21 @@ export function createApplication() {
                 patch({ detail: { title: message, body: error.message } }),
             }
           : undefined,
+    });
+  };
+  const notifySuccess = (message: string, signature?: string) => {
+    toast.success(message, {
+      action: signature
+        ? {
+            label: "View transaction",
+            onClick: () =>
+              window.open(
+                transactionUrl(signature),
+                "_blank",
+                "noopener,noreferrer",
+              ),
+          }
+        : undefined,
     });
   };
   const dispose = (connection: Connection | null) => {
@@ -477,19 +493,21 @@ export function createApplication() {
       if (!current(id)) return false;
       const signatures = await action(api, progress(id, confirmed));
       if (!active) return false;
+      const receipt = {
+        message: message ?? "Transaction completed",
+        confirmed: Array.from(new Set([...confirmed, ...signatures])),
+        unresolved: [],
+        failed: [],
+      };
+      const stillCurrent = current(id);
       patch({
         status: null,
-        result:
-          message === null
-            ? null
-            : {
-                message,
-                confirmed: Array.from(new Set([...confirmed, ...signatures])),
-                unresolved: [],
-                failed: [],
-              },
+        result: stillCurrent || message === null ? null : receipt,
       });
-      return current(id);
+      if (stillCurrent && message !== null) {
+        notifySuccess(message, receipt.confirmed.at(-1));
+      }
+      return stillCurrent;
     } catch (error) {
       if (active) failure(error, confirmed, session);
       return false;
@@ -603,10 +621,15 @@ export function createApplication() {
         else next.unresolved.push(signature);
       });
       if (next.unresolved.length === 0) unresolvedRpc = null;
-      next.message = next.unresolved.length
-        ? "Confirmation is still unknown. Check again shortly."
-        : "Transaction status checked. Review balances before continuing.";
-      patch({ result: next });
+      if (next.unresolved.length === 0 && next.failed.length === 0) {
+        patch({ result: null });
+        notifySuccess("Transaction confirmed", next.confirmed.at(-1));
+      } else {
+        next.message = next.unresolved.length
+          ? "Confirmation is still unknown. Check again shortly."
+          : "Transaction failed. Review updated balances before continuing.";
+        patch({ result: next });
+      }
       await refresh(true);
     } catch (error) {
       if (current(id))
