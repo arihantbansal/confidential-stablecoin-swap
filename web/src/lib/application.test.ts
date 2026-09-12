@@ -244,4 +244,15 @@ describe("application controller", () => {
       }
     },
   );
+  it("shows success once through the persistent receipt", async () => {
+    const application = await connectedApplication();
+    const { toast } = await import("sonner");
+    engineApi.convert.mockResolvedValueOnce(["confirmed-signature"]);
+    expect(await application.submit("convert", 1n, "")).toBe(true);
+    expect(application.getSnapshot().result?.confirmed).toEqual([
+      "confirmed-signature",
+    ]);
+    expect(application.getSnapshot().status).toBeNull();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
 });

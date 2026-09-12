@@ -48,7 +48,7 @@ export interface ApplicationState {
   incomingTransfers: { asset: LocalAsset; amount: bigint | null }[];
   applyingMint: string | null;
   busy: boolean;
-  status: { state: "working" | "done"; message: string } | null;
+  status: { state: "working"; message: string } | null;
   result: OperationResult | null;
   wallets: readonly Wallet[];
   walletDialogOpen: boolean;
@@ -478,7 +478,7 @@ export function createApplication() {
       const signatures = await action(api, progress(id, confirmed));
       if (!active) return false;
       patch({
-        status: current(id) ? { state: "done", message } : null,
+        status: null,
         result: {
           message,
           confirmed: Array.from(new Set([...confirmed, ...signatures])),
@@ -486,7 +486,6 @@ export function createApplication() {
           failed: [],
         },
       });
-      toast.success(message);
       return current(id);
     } catch (error) {
       if (active) failure(error, confirmed, session);

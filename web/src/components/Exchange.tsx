@@ -1,24 +1,24 @@
-import { Loader2 } from "lucide-react";
-import { useId, useRef, useState } from "react";
 import { AmountField } from "@/components/AmountField";
 import { AssetPicker } from "@/components/AssetPicker";
+import { ExchangeActionButton } from "@/components/ExchangeActionButton";
 import { ExchangeMode } from "@/components/ExchangeMode";
+import { ExchangePendingConversion } from "@/components/ExchangePendingConversion";
+import { ExchangeRecipientField } from "@/components/ExchangeRecipientField";
 import { ExchangeReview } from "@/components/ExchangeReview";
-import { Button } from "@/components/ui/button";
+import type {
+  ExchangeAction,
+  ExchangeStatus,
+} from "@/components/exchangeTypes";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { useExchangeForm } from "@/components/useExchangeForm";
 import { formatBaseUnits } from "@/lib/amounts";
 import type { BalanceView } from "@/lib/engine";
-import { getExchangeState } from "@/lib/exchange";
 import type { LocalAsset } from "@/lib/manifest";
 
-export type ExchangeAction = "convert" | "send" | "withdraw";
-
-export interface ExchangeStatus {
-  state: "working" | "done";
-  message: string;
-}
+export type {
+  ExchangeAction,
+  ExchangeStatus,
+} from "@/components/exchangeTypes";
 
 export type BalanceState = "loading" | "ready" | "locked" | "error";
 
@@ -40,8 +40,6 @@ interface ExchangeProps {
   onAssetChange: (asset: LocalAsset) => void;
   balanceState?: BalanceState;
 }
-
-type Mode = "convert" | "send";
 
 function unknownBalanceLabel(balanceState?: BalanceState): string {
   if (balanceState === "loading") return "Loading…";
@@ -74,133 +72,15 @@ export function Exchange({
   onAssetChange,
   balanceState,
 }: ExchangeProps) {
-  const [mode, setMode] = useState<Mode>("convert");
-  const [reversed, setReversed] = useState(false);
-  const [amount, setAmount] = useState("");
-  const [recipient, setRecipient] = useState("");
-  const [amountTouched, setAmountTouched] = useState(false);
-  const [recipientTouched, setRecipientTouched] = useState(false);
-  const [reviewOpen, setReviewOpen] = useState(false);
-  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
-
-  const amountId = useId();
-  const amountErrorId = useId();
-  const recipientId = useId();
-  const recipientErrorId = useId();
-  const statusId = useId();
-  const amountRef = useRef<HTMLInputElement>(null);
-  const recipientRef = useRef<HTMLInputElement>(null);
-
-  const decimals = asset?.decimals ?? 6;
-
-  const {
-    internalAction,
-    displayLabel,
-    parsed,
-    amountError: amountErrorRaw,
-    emptyOrZero,
-    sourceBalance,
-    sourceKind,
-    targetKind,
-    insufficient,
-    recipientBad,
-    canReview,
-    ctaLabel,
-  } = getExchangeState({
-    mode,
-    reversed,
-    amount,
-    recipient,
-    decimals,
+  const form = useExchangeForm({
     balances,
     unwrapped,
+    busy,
+    asset,
+    onAssetChange,
+    onActionChange,
+    onSubmit,
   });
-  const amountError = amountTouched && !emptyOrZero ? amountErrorRaw : null;
-  const recipientError =
-    recipientTouched && recipientBad
-      ? "Enter a valid recipient address."
-      : null;
-
-  function clearForm() {
-    setAmount("");
-    setAmountTouched(false);
-    setRecipientTouched(false);
-  }
-
-  function applyMax() {
-    if (sourceBalance !== null && sourceBalance > 0n) {
-      setAmount(formatBaseUnits(sourceBalance, decimals));
-      setAmountTouched(false);
-    }
-  }
-
-  function openReview() {
-    if (emptyOrZero || insufficient) {
-      return;
-    }
-    if (amountErrorRaw) {
-      setAmountTouched(true);
-      amountRef.current?.focus();
-      return;
-    }
-    if (mode === "send" && recipientBad) {
-      setRecipientTouched(true);
-      recipientRef.current?.focus();
-      return;
-    }
-    if (canReview) {
-      setReviewOpen(true);
-    }
-  }
-
-  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (busy) {
-      return;
-    }
-    openReview();
-  }
-
-  async function confirm() {
-    if (busy || !canReview || parsed === null) {
-      return;
-    }
-    setReviewOpen(false);
-    const ok = await onSubmit(internalAction, parsed, recipient.trim());
-    if (ok) {
-      clearForm();
-    }
-  }
-
-  async function finishConversion() {
-    if (balances.public === null || balances.public <= 0n) {
-      return;
-    }
-    const ok = await onSubmit("withdraw", balances.public, "");
-    if (ok) {
-      clearForm();
-    }
-  }
-
-  function switchMode(next: Mode) {
-    if (next === mode || busy) {
-      return;
-    }
-    setMode(next);
-    setAmountTouched(false);
-    setRecipientTouched(false);
-    onActionChange();
-  }
-
-  function handleAssetSelect(candidate: LocalAsset) {
-    onAssetChange(candidate);
-    setAssetPickerOpen(false);
-    setAmountTouched(false);
-    onActionChange();
-  }
-
-  const ctaDisabled =
-    busy || emptyOrZero || insufficient || sourceBalance === null;
   const symbol = asset?.symbol ?? "—";
 
   return (
@@ -208,162 +88,93 @@ export function Exchange({
       <Card className="gap-0 py-0">
         <CardContent className="p-4">
           <ExchangeMode
-            mode={mode}
+            mode={form.mode}
             busy={busy}
-            sourceKind={sourceKind}
-            targetKind={targetKind}
-            onModeChange={switchMode}
-            onReverse={() => {
-              setReversed((value) => !value);
-              setAmountTouched(false);
-              onActionChange();
-            }}
+            sourceKind={form.sourceKind}
+            targetKind={form.targetKind}
+            onModeChange={form.switchMode}
+            onReverse={form.reverseDirection}
           />
-          <form onSubmit={handleSubmit}>
+          <form onSubmit={form.handleSubmit}>
             <div className="mt-4 space-y-2">
               <AmountField
-                amountId={amountId}
-                amountErrorId={amountErrorId}
-                amount={amount}
-                amountError={amountError}
+                amountId={form.amountId}
+                amountErrorId={form.amountErrorId}
+                amount={form.amount}
+                amountError={form.amountError}
                 busy={busy}
-                sourceKind={sourceKind}
+                sourceKind={form.sourceKind}
                 sourceBalanceText={formatBalance(
-                  sourceBalance,
-                  decimals,
+                  form.sourceBalance,
+                  form.decimals,
                   connected ? balanceState : undefined,
                 )}
                 maxDisabled={
-                  busy || sourceBalance === null || sourceBalance <= 0n
+                  busy ||
+                  form.sourceBalance === null ||
+                  form.sourceBalance <= 0n
                 }
-                inputRef={amountRef}
+                inputRef={form.amountRef}
                 assetControl={
                   <AssetPicker
                     asset={asset}
                     assets={assets}
-                    open={assetPickerOpen}
+                    open={form.assetPickerOpen}
                     busy={busy}
-                    onOpenChange={setAssetPickerOpen}
-                    onSelect={handleAssetSelect}
+                    onOpenChange={form.setAssetPickerOpen}
+                    onSelect={form.handleAssetSelect}
                   />
                 }
-                onAmountChange={(value) => {
-                  setAmount(value);
-                  setAmountTouched(false);
-                }}
-                onAmountBlur={() => setAmountTouched(true)}
-                onApplyMax={applyMax}
+                onAmountChange={form.handleAmountChange}
+                onAmountBlur={form.handleAmountBlur}
+                onApplyMax={form.applyMax}
               />
-
-              {mode === "send" ? (
-                <div className="space-y-2">
-                  <Label
-                    htmlFor={recipientId}
-                    className="text-sm text-muted-foreground"
-                  >
-                    To
-                  </Label>
-                  <Input
-                    ref={recipientRef}
-                    id={recipientId}
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="Recipient address"
-                    value={recipient}
-                    disabled={busy}
-                    onChange={(event) => {
-                      setRecipient(event.target.value);
-                      setRecipientTouched(false);
-                    }}
-                    onBlur={(event) => {
-                      if (event.target.value.trim() !== "") {
-                        setRecipientTouched(true);
-                      }
-                    }}
-                    aria-invalid={recipientError ? true : undefined}
-                    aria-describedby={
-                      recipientError ? recipientErrorId : undefined
-                    }
-                    className="min-h-11 font-mono text-base md:text-sm"
-                  />
-                  {recipientError ? (
-                    <p
-                      id={recipientErrorId}
-                      role="alert"
-                      className="text-xs text-destructive"
-                    >
-                      {recipientError}
-                    </p>
-                  ) : null}
-                </div>
+              {form.mode === "send" ? (
+                <ExchangeRecipientField
+                  id={form.recipientId}
+                  errorId={form.recipientErrorId}
+                  value={form.recipient}
+                  error={form.recipientError}
+                  busy={busy}
+                  inputRef={form.recipientRef}
+                  onChange={form.handleRecipientChange}
+                  onBlur={form.handleRecipientBlur}
+                />
               ) : null}
             </div>
-
-            <div className="mt-4">
-              {!connected ? (
-                <Button
-                  type="button"
-                  onClick={onConnect}
-                  className="press min-h-11 w-full"
-                >
-                  Connect wallet
-                </Button>
-              ) : (
-                <Button
-                  type="submit"
-                  disabled={ctaDisabled}
-                  className="press min-h-11 w-full"
-                  aria-describedby={statusId}
-                >
-                  {busy && status?.state === "working" ? (
-                    <span className="inline-flex items-center gap-2">
-                      <Loader2
-                        className="size-4 animate-spin"
-                        aria-hidden="true"
-                      />
-                      {status.message}
-                    </span>
-                  ) : (
-                    ctaLabel
-                  )}
-                </Button>
-              )}
-            </div>
+            <ExchangeActionButton
+              connected={connected}
+              busy={busy}
+              status={status}
+              ctaDisabled={form.ctaDisabled}
+              ctaLabel={form.ctaLabel}
+              statusId={form.statusId}
+              onConnect={onConnect}
+            />
           </form>
-          <p id={statusId} role="status" className="sr-only">
+          <p id={form.statusId} role="status" className="sr-only">
             {status?.message ?? ""}
           </p>
-
-          {connected && balances.public !== null && balances.public > 0n ? (
-            <div className="mt-4 space-y-2">
-              <p className="text-sm text-muted-foreground">
-                {formatBaseUnits(balances.public, decimals)} {symbol} is ready
-                to return to your public balance.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={busy}
-                className="press min-h-11 w-full"
-                onClick={() => void finishConversion()}
-              >
-                Finish conversion
-              </Button>
-            </div>
-          ) : null}
-
-          <ExchangeReview
-            open={reviewOpen}
-            busy={busy || !canReview}
-            mode={mode}
-            parsed={parsed}
-            decimals={decimals}
+          <ExchangePendingConversion
+            connected={connected}
+            publicBalance={balances.public}
+            decimals={form.decimals}
             symbol={symbol}
-            recipient={recipient}
-            internalAction={internalAction}
-            confirmLabel={displayLabel}
-            onOpenChange={setReviewOpen}
-            onConfirm={() => void confirm()}
+            busy={busy}
+            onFinish={form.finishConversion}
+          />
+          <ExchangeReview
+            open={form.reviewOpen}
+            busy={busy || !form.canReview}
+            mode={form.mode}
+            parsed={form.parsed}
+            decimals={form.decimals}
+            symbol={symbol}
+            recipient={form.recipient}
+            internalAction={form.internalAction}
+            confirmLabel={form.displayLabel}
+            onOpenChange={form.setReviewOpen}
+            onConfirm={form.confirm}
           />
         </CardContent>
       </Card>

@@ -22,6 +22,17 @@ interface RenderedTransfer extends IncomingTransfer {
   exiting: boolean;
 }
 
+interface PresenceState {
+  items: IncomingTransfer[];
+  rendered: RenderedTransfer[];
+  removedFocus: FocusRecovery[];
+}
+
+interface FocusRecovery {
+  removedKey: string;
+  nextKey: string | undefined;
+}
+
 function keyOf(asset: LocalAsset): string {
   return asset.mint.toString();
 }
@@ -32,46 +43,94 @@ function transferLabel({ asset, amount }: IncomingTransfer): string {
     : `${formatBaseUnits(amount, asset.decimals)} ${asset.symbol} received`;
 }
 
+function sameTransfer(
+  left: IncomingTransfer,
+  right: IncomingTransfer,
+): boolean {
+  return (
+    keyOf(left.asset) === keyOf(right.asset) &&
+    left.amount === right.amount &&
+    left.asset.symbol === right.asset.symbol &&
+    left.asset.decimals === right.asset.decimals &&
+    left.asset.tokenProgram === right.asset.tokenProgram &&
+    left.asset.wrapped.mint === right.asset.wrapped.mint &&
+    left.asset.wrapped.escrow === right.asset.wrapped.escrow &&
+    left.asset.wrapped.mintAuthority === right.asset.wrapped.mintAuthority
+  );
+}
+
+function sameTransfers(
+  left: IncomingTransfer[],
+  right: IncomingTransfer[],
+): boolean {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => sameTransfer(item, right[index]))
+  );
+}
+
+function reconcileRendered(
+  current: RenderedTransfer[],
+  items: IncomingTransfer[],
+): RenderedTransfer[] {
+  const nextByKey = new Map(items.map((item) => [keyOf(item.asset), item]));
+  const currentKeys = new Set(current.map((item) => keyOf(item.asset)));
+  return [
+    ...current.map((item) => {
+      const next = nextByKey.get(keyOf(item.asset));
+      return next ? { ...next, exiting: false } : { ...item, exiting: true };
+    }),
+    ...items
+      .filter((item) => !currentKeys.has(keyOf(item.asset)))
+      .map((item) => ({ ...item, exiting: false })),
+  ];
+}
+
 export function IncomingTransfers({
   items,
   applyingMint,
   busy,
   onApply,
 }: IncomingTransfersProps) {
-  const [rendered, setRendered] = useState<RenderedTransfer[]>([]);
   const [announcement, setAnnouncement] = useState("");
-  const [focusRecovery, setFocusRecovery] = useState<{
-    removedKey: string;
-    nextKey: string | undefined;
-  } | null>(null);
-  const previousKeysRef = useRef<string[]>([]);
+  const focusRecoveryRef = useRef<FocusRecovery | null>(null);
   const lastFocusedKeyRef = useRef<string | null>(null);
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
   const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
+  const [presence, setPresence] = useState<PresenceState>(() => ({
+    items: [],
+    rendered: [],
+    removedFocus: [],
+  }));
+
+  if (!sameTransfers(presence.items, items)) {
+    const previousKeys = presence.items.map((item) => keyOf(item.asset));
+    const previousKeySet = new Set(previousKeys);
     const nextKeys = items.map((item) => keyOf(item.asset));
-    const nextByKey = new Map(items.map((item) => [keyOf(item.asset), item]));
-    const previousKeys = previousKeysRef.current;
-    const removedKeys = previousKeys.filter((key) => !nextByKey.has(key));
+    const nextKeySet = new Set(nextKeys);
     const addedItems = items.filter(
-      (item) => !previousKeys.includes(keyOf(item.asset)),
+      (item) => !previousKeySet.has(keyOf(item.asset)),
     );
-    setRendered((current) => {
-      const currentKeys = new Set(current.map((item) => keyOf(item.asset)));
-      return [
-        ...current.map((item) => {
-          const next = nextByKey.get(keyOf(item.asset));
-          return next
-            ? { ...next, exiting: false }
-            : { ...item, exiting: true };
-        }),
-        ...items
-          .filter((item) => !currentKeys.has(keyOf(item.asset)))
-          .map((item) => ({ ...item, exiting: false })),
-      ];
+    const removedFocus: FocusRecovery[] = [];
+    previousKeys.forEach((key, index) => {
+      if (nextKeySet.has(key)) return;
+      removedFocus.push({
+        removedKey: key,
+        nextKey:
+          nextKeys.length > 0
+            ? nextKeys[Math.min(index, nextKeys.length - 1)]
+            : undefined,
+      });
     });
 
+    // Presence is state because removed rows must stay mounted until their
+    // exit transition ends. Reconcile changed items before committing them.
+    setPresence({
+      items,
+      rendered: reconcileRendered(presence.rendered, items),
+      removedFocus,
+    });
     setAnnouncement(
       addedItems.length === 0
         ? ""
@@ -79,53 +138,49 @@ export function IncomingTransfers({
           ? transferLabel(addedItems[0])
           : "Incoming funds received",
     );
+  }
 
-    const focusedKey = lastFocusedKeyRef.current;
-    const activeElement = document.activeElement;
-    if (
-      focusedKey &&
-      removedKeys.includes(focusedKey) &&
-      (activeElement === document.body ||
-        (activeElement instanceof HTMLButtonElement &&
-          activeElement.dataset.incomingMint === focusedKey))
-    ) {
-      const oldIndex = previousKeys.indexOf(focusedKey);
-      setFocusRecovery({
-        removedKey: focusedKey,
-        nextKey: nextKeys[Math.min(oldIndex, nextKeys.length - 1)],
-      });
-    }
-
-    previousKeysRef.current = nextKeys;
-  }, [items]);
+  const renderedTransfers = presence.rendered;
 
   useEffect(() => {
-    if (!focusRecovery || busy) return;
+    const focusedKey = lastFocusedKeyRef.current;
+    const candidate = presence.removedFocus.find(
+      (recovery) => recovery.removedKey === focusedKey,
+    );
+    const activeElement = document.activeElement;
+    if (
+      candidate &&
+      (activeElement === document.body ||
+        (activeElement instanceof HTMLButtonElement &&
+          activeElement.dataset.incomingMint === candidate.removedKey))
+    )
+      focusRecoveryRef.current = candidate;
+
+    const recovery = focusRecoveryRef.current;
+    if (!recovery || busy) return;
     const frame = window.requestAnimationFrame(() => {
       const activeElement = document.activeElement;
       const focusIsStillLost =
         activeElement === document.body ||
         (activeElement instanceof HTMLButtonElement &&
-          activeElement.dataset.incomingMint === focusRecovery.removedKey);
+          activeElement.dataset.incomingMint === recovery.removedKey);
       if (focusIsStillLost) {
-        const nextButton = focusRecovery.nextKey
-          ? buttonRefs.current.get(focusRecovery.nextKey)
+        const nextButton = recovery.nextKey
+          ? buttonRefs.current.get(recovery.nextKey)
           : undefined;
-        if (nextButton && !nextButton.disabled) {
-          nextButton.focus();
-        } else {
+        if (nextButton && !nextButton.disabled) nextButton.focus();
+        else
           containerRef.current?.parentElement
             ?.querySelector<HTMLElement>('[aria-label="Exchange"]')
             ?.focus();
-        }
       }
       lastFocusedKeyRef.current = null;
-      setFocusRecovery(null);
+      focusRecoveryRef.current = null;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [busy, focusRecovery]);
+  }, [busy, presence]);
 
-  const hasVisibleRows = rendered.some((item) => !item.exiting);
+  const hasVisibleRows = renderedTransfers.some((item) => !item.exiting);
 
   return (
     <div
@@ -143,14 +198,14 @@ export function IncomingTransfers({
         data-exiting={hasVisibleRows ? undefined : "true"}
       >
         <div className="incoming-transfer-row-clip">
-          {rendered.length > 0 ? (
+          {renderedTransfers.length > 0 ? (
             <Card
               role="region"
               aria-label="Incoming transfers"
               className="gap-0 overflow-hidden py-0"
             >
               <CardContent className="p-0">
-                {rendered.map((item, index) => {
+                {renderedTransfers.map((item, index) => {
                   const key = keyOf(item.asset);
                   const applying = applyingMint === key;
                   return (
@@ -163,11 +218,14 @@ export function IncomingTransfers({
                           item.exiting &&
                           event.propertyName === "grid-template-rows"
                         ) {
-                          setRendered((current) =>
-                            current.filter(
-                              (candidate) => keyOf(candidate.asset) !== key,
+                          setPresence((current) => ({
+                            ...current,
+                            rendered: current.rendered.filter(
+                              (candidate) =>
+                                keyOf(candidate.asset) !== key ||
+                                !candidate.exiting,
                             ),
-                          );
+                          }));
                         }
                       }}
                     >
