@@ -1,0 +1,66 @@
+{
+    "name": "@solana-program/token-wrap",
+    "version": "2.7.0",
+    "description": "Javascript helpers for interacting with the Solana Token Wrap program",
+    "author": "Anza Maintainers <maintainers@anza.xyz>",
+    "license": "Apache-2.0",
+    "sideEffects": false,
+    "module": "./dist/src/index.mjs",
+    "main": "./dist/src/index.js",
+    "types": "./dist/types/index.d.ts",
+    "type": "commonjs",
+    "exports": {
+        ".": {
+            "types": "./dist/types/index.d.ts",
+            "import": "./dist/src/index.mjs",
+            "require": "./dist/src/index.js"
+        }
+    },
+    "files": [
+        "./dist/src",
+        "./dist/types",
+        "./src/"
+    ],
+    "scripts": {
+        "build": "tsc && tsup",
+        "build:docs": "typedoc src/index.ts",
+        "lint": "oxlint src",
+        "lint:fix": "oxlint --fix src",
+        "format": "oxfmt --write .",
+        "format:check": "oxfmt --check .",
+        "test": "exit 0",
+        "example:single-signer": "tsx src/examples/single-signer.ts",
+        "example:multisig": "tsx src/examples/multisig.ts"
+    },
+    "publishConfig": {
+        "access": "public",
+        "registry": "https://registry.npmjs.org"
+    },
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/solana-program/token-wrap.git"
+    },
+    "bugs": {
+        "url": "https://github.com/solana-program/token-wrap/issues"
+    },
+    "peerDependencies": {
+        "@solana/kit": "^8.2.0"
+    },
+    "dependencies": {
+        "@solana-program/system": "^0.14.1",
+        "@solana-program/token": "^0.16.1",
+        "@solana-program/token-2022": "^0.16.1",
+        "@solana/program-client-core": "^8.1.0"
+    },
+    "devDependencies": {
+        "@solana/kit": "^8.2.0",
+        "@tsconfig/strictest": "^2.0.8",
+        "@types/node": "^26.5.0",
+        "oxfmt": "^0.67.0",
+        "oxlint": "^1.82.0",
+        "tsup": "^8.5.1",
+        "tsx": "^4.23.12",
+        "typedoc": "^0.28.20",
+        "typescript": "^6.0.3"
+    }
+}

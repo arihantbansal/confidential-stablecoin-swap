@@ -1,0 +1,7 @@
+{
+  "command": "SBF_OUT_DIR=\"$PWD/target/deploy\" cargo test --manifest-path vendor/token-wrap/program/Cargo.toml --locked",
+  "passed": 114,
+  "failed": 0,
+  "ignored": 1,
+  "localProgramId": "GxEQHbmE777LzkJjLX2EV7t1n37bZq1gD47gC8Xp9i9m"
+}

@@ -1,0 +1,20 @@
+[package]
+name = "test-transfer-hook"
+version = "0.1.0"
+edition = { workspace = true }
+publish = false
+
+[features]
+no-entrypoint = []
+
+[dependencies]
+solana-account-info = { workspace = true }
+solana-program-entrypoint = { workspace = true }
+solana-program-error = { workspace = true }
+solana-pubkey = { workspace = true }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[lints]
+workspace = true

@@ -1,0 +1,927 @@
+//! Program state processor
+
+use {
+    crate::{
+        error::TokenWrapError,
+        get_canonical_pointer_address_signer_seeds, get_canonical_pointer_address_with_seed,
+        get_wrapped_mint_address, get_wrapped_mint_address_with_seed, get_wrapped_mint_authority,
+        get_wrapped_mint_authority_signer_seeds, get_wrapped_mint_authority_with_seed,
+        get_wrapped_mint_backpointer_address_signer_seeds,
+        get_wrapped_mint_backpointer_address_with_seed, get_wrapped_mint_signer_seeds,
+        instruction::TokenWrapInstruction,
+        metadata::extract_token_metadata,
+        metaplex::token_2022_metadata_to_metaplex,
+        mint_customizer::{
+            default_token_2022::DefaultToken2022Customizer, interface::MintCustomizer,
+        },
+        state::{Backpointer, CanonicalDeploymentPointer},
+    },
+    mpl_token_metadata::{
+        accounts::Metadata as MetaplexMetadata,
+        instructions::{
+            CreateMetadataAccountV3, CreateMetadataAccountV3InstructionArgs,
+            UpdateMetadataAccountV2, UpdateMetadataAccountV2InstructionArgs,
+        },
+    },
+    solana_account_info::{next_account_info, AccountInfo},
+    solana_cpi::{invoke, invoke_signed},
+    solana_msg::msg,
+    solana_program_error::{ProgramError, ProgramResult},
+    solana_program_pack::Pack,
+    solana_pubkey::Pubkey,
+    solana_rent::Rent,
+    solana_system_interface::instruction::{allocate, assign},
+    solana_sysvar::{clock::Clock, Sysvar},
+    spl_associated_token_account_interface::address::get_associated_token_address_with_program_id,
+    spl_token_2022::onchain::{
+        extract_multisig_accounts, invoke_transfer_checked, invoke_transfer_checked_with_fee,
+    },
+    spl_token_2022_interface::{
+        extension::{
+            account_len::try_for_each_required_init_account_extension,
+            transfer_fee::TransferFeeConfig, BaseStateWithExtensions, ExtensionType,
+            PodStateWithExtensions,
+        },
+        instruction::initialize_mint2,
+        pod::{PodAccount, PodMint},
+        state::AccountState,
+    },
+    spl_token_metadata_interface::{
+        instruction::{initialize as initialize_token_metadata, remove_key, update_field},
+        state::{Field, TokenMetadata},
+    },
+    std::{collections::HashMap, mem},
+};
+
+/// Processes [`CreateMint`](enum.TokenWrapInstruction.html) instruction.
+pub fn process_create_mint<M: MintCustomizer>(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    idempotent: bool,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+
+    let wrapped_mint_account = next_account_info(account_info_iter)?;
+    let wrapped_backpointer_account = next_account_info(account_info_iter)?;
+    let unwrapped_mint_account = next_account_info(account_info_iter)?;
+    let _system_program_account = next_account_info(account_info_iter)?;
+    let wrapped_token_program_account = next_account_info(account_info_iter)?;
+
+    let (wrapped_mint_address, mint_bump) = get_wrapped_mint_address_with_seed(
+        unwrapped_mint_account.key,
+        wrapped_token_program_account.key,
+    );
+
+    let (wrapped_backpointer_address, backpointer_bump) =
+        get_wrapped_mint_backpointer_address_with_seed(wrapped_mint_account.key);
+
+    // PDA derivation validation
+
+    if *wrapped_mint_account.key != wrapped_mint_address {
+        Err(TokenWrapError::WrappedMintMismatch)?
+    }
+
+    if *wrapped_backpointer_account.key != wrapped_backpointer_address {
+        Err(TokenWrapError::BackpointerMismatch)?
+    }
+
+    // The *unwrapped mint* must itself be a real SPL‑Token mint
+    if unwrapped_mint_account.owner != &spl_token::id()
+        && unwrapped_mint_account.owner != &spl_token_2022_interface::id()
+    {
+        Err(ProgramError::InvalidAccountOwner)?
+    }
+
+    // Idempotency checks
+
+    if wrapped_mint_account.data_len() > 0 || wrapped_backpointer_account.data_len() > 0 {
+        msg!("Wrapped mint or backpointer account already initialized");
+        if !idempotent {
+            Err(ProgramError::AccountAlreadyInitialized)?
+        }
+        if wrapped_mint_account.owner != wrapped_token_program_account.key {
+            Err(TokenWrapError::InvalidWrappedMintOwner)?
+        }
+        if wrapped_backpointer_account.owner != program_id {
+            Err(TokenWrapError::InvalidBackpointerOwner)?
+        }
+        return Ok(());
+    }
+
+    // Initialize wrapped mint PDA
+
+    let bump_seed = [mint_bump];
+    let signer_seeds = get_wrapped_mint_signer_seeds(
+        unwrapped_mint_account.key,
+        wrapped_token_program_account.key,
+        &bump_seed,
+    );
+
+    let space = if *wrapped_token_program_account.key == spl_token_2022_interface::id() {
+        M::get_token_2022_mint_space()?
+    } else {
+        spl_token::state::Mint::get_packed_len()
+    };
+
+    let rent = Rent::get()?;
+    let mint_rent_required = rent.minimum_balance(space);
+    if wrapped_mint_account.lamports() < mint_rent_required {
+        msg!(
+            "Error: wrapped_mint_account requires pre-funding of {} lamports",
+            mint_rent_required
+        );
+        Err(ProgramError::AccountNotRentExempt)?
+    }
+
+    // Initialize the wrapped mint
+
+    invoke_signed(
+        &allocate(&wrapped_mint_address, space as u64),
+        core::slice::from_ref(wrapped_mint_account),
+        &[&signer_seeds],
+    )?;
+    invoke_signed(
+        &assign(&wrapped_mint_address, wrapped_token_program_account.key),
+        core::slice::from_ref(wrapped_mint_account),
+        &[&signer_seeds],
+    )?;
+
+    if *wrapped_token_program_account.key == spl_token_2022_interface::id() {
+        M::initialize_extensions(wrapped_mint_account, wrapped_token_program_account)?;
+    }
+
+    let (freeze_authority, decimals) = M::get_freeze_auth_and_decimals(unwrapped_mint_account)?;
+    let wrapped_mint_authority = get_wrapped_mint_authority(wrapped_mint_account.key);
+
+    invoke(
+        &initialize_mint2(
+            wrapped_token_program_account.key,
+            wrapped_mint_account.key,
+            &wrapped_mint_authority,
+            freeze_authority.as_ref(),
+            decimals,
+        )?,
+        core::slice::from_ref(wrapped_mint_account),
+    )?;
+
+    // Initialize backpointer PDA
+
+    let backpointer_space = std::mem::size_of::<Backpointer>();
+    let backpointer_rent_required = rent.minimum_balance(backpointer_space);
+    if wrapped_backpointer_account.lamports() < backpointer_rent_required {
+        msg!(
+            "Error: wrapped_backpointer_account requires pre-funding of {} lamports",
+            backpointer_rent_required
+        );
+        Err(ProgramError::AccountNotRentExempt)?
+    }
+
+    let bump_seed = [backpointer_bump];
+    let backpointer_signer_seeds =
+        get_wrapped_mint_backpointer_address_signer_seeds(wrapped_mint_account.key, &bump_seed);
+    invoke_signed(
+        &allocate(&wrapped_backpointer_address, backpointer_space as u64),
+        core::slice::from_ref(wrapped_backpointer_account),
+        &[&backpointer_signer_seeds],
+    )?;
+    invoke_signed(
+        &assign(&wrapped_backpointer_address, program_id),
+        core::slice::from_ref(wrapped_backpointer_account),
+        &[&backpointer_signer_seeds],
+    )?;
+
+    // Set data within backpointer PDA
+
+    let mut backpointer_account_data = wrapped_backpointer_account.try_borrow_mut_data()?;
+    let backpointer = bytemuck::from_bytes_mut::<Backpointer>(&mut backpointer_account_data[..]);
+    backpointer.unwrapped_mint = *unwrapped_mint_account.key;
+
+    Ok(())
+}
+
+/// Processes [`Wrap`](enum.TokenWrapInstruction.html) instruction.
+pub fn process_wrap(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
+    if amount == 0 {
+        Err(TokenWrapError::ZeroWrapAmount)?
+    }
+
+    let account_info_iter = &mut accounts.iter();
+
+    let recipient_wrapped_token_account = next_account_info(account_info_iter)?;
+    let wrapped_mint = next_account_info(account_info_iter)?;
+    let wrapped_mint_authority = next_account_info(account_info_iter)?;
+    let unwrapped_token_program = next_account_info(account_info_iter)?;
+    let wrapped_token_program = next_account_info(account_info_iter)?;
+    let unwrapped_token_account = next_account_info(account_info_iter)?;
+    let unwrapped_mint = next_account_info(account_info_iter)?;
+    let unwrapped_escrow = next_account_info(account_info_iter)?;
+    let transfer_authority = next_account_info(account_info_iter)?;
+
+    // Validate accounts
+
+    let expected_wrapped_mint =
+        get_wrapped_mint_address(unwrapped_mint.key, wrapped_token_program.key);
+    if expected_wrapped_mint != *wrapped_mint.key {
+        Err(TokenWrapError::WrappedMintMismatch)?
+    }
+
+    let (expected_authority, bump) = get_wrapped_mint_authority_with_seed(wrapped_mint.key);
+    if *wrapped_mint_authority.key != expected_authority {
+        Err(TokenWrapError::MintAuthorityMismatch)?
+    }
+
+    let expected_escrow = get_associated_token_address_with_program_id(
+        wrapped_mint_authority.key,
+        unwrapped_mint.key,
+        unwrapped_token_program.key,
+    );
+
+    if *unwrapped_escrow.key != expected_escrow {
+        Err(TokenWrapError::EscrowMismatch)?
+    }
+
+    {
+        let escrow_data = unwrapped_escrow.try_borrow_data()?;
+        let escrow_account = PodStateWithExtensions::<PodAccount>::unpack(&escrow_data)?;
+        if escrow_account.base.owner != expected_authority {
+            Err(TokenWrapError::EscrowOwnerMismatch)?
+        }
+    }
+
+    // Transfer unwrapped tokens from user to escrow
+
+    let unwrapped_mint_data = unwrapped_mint.try_borrow_data()?;
+    let unwrapped_mint_state = PodStateWithExtensions::<PodMint>::unpack(&unwrapped_mint_data)?;
+
+    // Calculate amount to mint (subtracting for possible transfer fee)
+    let clock = Clock::get()?.epoch;
+    let fee = unwrapped_mint_state
+        .get_extension::<TransferFeeConfig>()
+        .ok()
+        .and_then(|cfg| cfg.calculate_epoch_fee(clock, amount))
+        .unwrap_or(0);
+    let net_amount = amount
+        .checked_sub(fee)
+        .ok_or(ProgramError::ArithmeticOverflow)?;
+
+    if unwrapped_token_program.key == &spl_token_2022_interface::id() {
+        // This invoke fn does extra validation on calculated fee
+        invoke_transfer_checked_with_fee(
+            unwrapped_token_program.key,
+            unwrapped_token_account.clone(),
+            unwrapped_mint.clone(),
+            unwrapped_escrow.clone(),
+            transfer_authority.clone(),
+            &accounts[9..],
+            amount,
+            unwrapped_mint_state.base.decimals,
+            fee,
+            &[],
+        )?;
+    } else {
+        invoke_transfer_checked(
+            unwrapped_token_program.key,
+            unwrapped_token_account.clone(),
+            unwrapped_mint.clone(),
+            unwrapped_escrow.clone(),
+            transfer_authority.clone(),
+            &accounts[9..],
+            amount,
+            unwrapped_mint_state.base.decimals,
+            &[],
+        )?;
+    }
+
+    // Mint wrapped tokens to recipient
+    let bump_seed = [bump];
+    let signer_seeds = get_wrapped_mint_authority_signer_seeds(wrapped_mint.key, &bump_seed);
+
+    invoke_signed(
+        &spl_token_2022_interface::instruction::mint_to(
+            wrapped_token_program.key,
+            wrapped_mint.key,
+            recipient_wrapped_token_account.key,
+            wrapped_mint_authority.key,
+            &[],
+            net_amount,
+        )?,
+        &[
+            wrapped_mint.clone(),
+            recipient_wrapped_token_account.clone(),
+            wrapped_mint_authority.clone(),
+        ],
+        &[&signer_seeds],
+    )?;
+
+    Ok(())
+}
+
+/// Processes [`Unwrap`](enum.TokenWrapInstruction.html) instruction.
+pub fn process_unwrap(accounts: &[AccountInfo], amount: u64) -> ProgramResult {
+    if amount == 0 {
+        Err(TokenWrapError::ZeroWrapAmount)?
+    }
+
+    let account_info_iter = &mut accounts.iter();
+
+    let unwrapped_escrow = next_account_info(account_info_iter)?;
+    let recipient_unwrapped_token = next_account_info(account_info_iter)?;
+    let wrapped_mint_authority = next_account_info(account_info_iter)?;
+    let unwrapped_mint = next_account_info(account_info_iter)?;
+    let wrapped_token_program = next_account_info(account_info_iter)?;
+    let unwrapped_token_program = next_account_info(account_info_iter)?;
+    let wrapped_token_account = next_account_info(account_info_iter)?;
+    let wrapped_mint = next_account_info(account_info_iter)?;
+    let transfer_authority = next_account_info(account_info_iter)?;
+    let additional_accounts = account_info_iter.as_slice();
+
+    // Validate accounts
+
+    let expected_wrapped_mint =
+        get_wrapped_mint_address(unwrapped_mint.key, wrapped_token_program.key);
+    if expected_wrapped_mint != *wrapped_mint.key {
+        Err(TokenWrapError::WrappedMintMismatch)?
+    }
+
+    let (expected_authority, bump) = get_wrapped_mint_authority_with_seed(wrapped_mint.key);
+    if *wrapped_mint_authority.key != expected_authority {
+        Err(TokenWrapError::MintAuthorityMismatch)?
+    }
+
+    let expected_escrow = get_associated_token_address_with_program_id(
+        wrapped_mint_authority.key,
+        unwrapped_mint.key,
+        unwrapped_token_program.key,
+    );
+    if *unwrapped_escrow.key != expected_escrow {
+        Err(TokenWrapError::EscrowMismatch)?
+    }
+
+    // Burn wrapped tokens
+
+    let multisig_signer_keys = extract_multisig_accounts(transfer_authority, additional_accounts)?
+        .iter()
+        .map(|a| a.key)
+        .collect::<Vec<_>>();
+
+    invoke(
+        &spl_token_2022_interface::instruction::burn(
+            wrapped_token_program.key,
+            wrapped_token_account.key,
+            wrapped_mint.key,
+            transfer_authority.key,
+            &multisig_signer_keys,
+            amount,
+        )?,
+        &accounts[6..],
+    )?;
+
+    // Transfer unwrapped tokens from escrow to recipient
+
+    let unwrapped_mint_data = unwrapped_mint.try_borrow_data()?;
+    let unwrapped_mint_state = PodStateWithExtensions::<PodMint>::unpack(&unwrapped_mint_data)?;
+    let bump_seed = [bump];
+    let signer_seeds = get_wrapped_mint_authority_signer_seeds(wrapped_mint.key, &bump_seed);
+
+    invoke_transfer_checked(
+        unwrapped_token_program.key,
+        unwrapped_escrow.clone(),
+        unwrapped_mint.clone(),
+        recipient_unwrapped_token.clone(),
+        wrapped_mint_authority.clone(),
+        additional_accounts,
+        amount,
+        unwrapped_mint_state.base.decimals,
+        &[&signer_seeds],
+    )?;
+
+    Ok(())
+}
+
+/// Processes [`CloseStuckEscrow`](enum.TokenWrapInstruction.html) instruction.
+pub fn process_close_stuck_escrow(accounts: &[AccountInfo]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+
+    let escrow_account = next_account_info(account_info_iter)?;
+    let destination_account = next_account_info(account_info_iter)?;
+    let unwrapped_mint = next_account_info(account_info_iter)?;
+    let wrapped_mint = next_account_info(account_info_iter)?;
+    let wrapped_mint_authority = next_account_info(account_info_iter)?;
+    let _token_2022_program = next_account_info(account_info_iter)?;
+
+    // This instruction is only for spl-token-2022 accounts because only they
+    // can have extensions that lead to size changes.
+    if *escrow_account.owner != spl_token_2022_interface::id()
+        || unwrapped_mint.owner != &spl_token_2022_interface::id()
+    {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    let expected_wrapped_mint_pubkey =
+        get_wrapped_mint_address(unwrapped_mint.key, wrapped_mint.owner);
+    if *wrapped_mint.key != expected_wrapped_mint_pubkey {
+        Err(TokenWrapError::WrappedMintMismatch)?
+    }
+
+    let (expected_authority, bump) = get_wrapped_mint_authority_with_seed(wrapped_mint.key);
+    if *wrapped_mint_authority.key != expected_authority {
+        Err(TokenWrapError::MintAuthorityMismatch)?
+    }
+
+    let expected_escrow_address = get_associated_token_address_with_program_id(
+        wrapped_mint_authority.key,
+        unwrapped_mint.key,
+        unwrapped_mint.owner,
+    );
+
+    if *escrow_account.key != expected_escrow_address {
+        return Err(TokenWrapError::EscrowMismatch.into());
+    }
+
+    let escrow_data = escrow_account.try_borrow_data()?;
+    let escrow_state = PodStateWithExtensions::<PodAccount>::unpack(&escrow_data)?;
+
+    if escrow_state.base.owner != *wrapped_mint_authority.key {
+        return Err(TokenWrapError::EscrowOwnerMismatch.into());
+    }
+
+    // Closing only works when the token balance is zero
+    if u64::from(escrow_state.base.amount) != 0 {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    // Ensure the account is in the initialized state
+    if escrow_state.base.state != (AccountState::Initialized as u8) {
+        return Err(ProgramError::InvalidAccountData);
+    }
+
+    let current_account_extensions = escrow_state.get_extension_types()?;
+    drop(escrow_data);
+
+    let mint_data = unwrapped_mint.try_borrow_data()?;
+    let mint_state = PodStateWithExtensions::<PodMint>::unpack(&mint_data)?;
+    let mut required_account_extensions = vec![];
+    try_for_each_required_init_account_extension(mint_state.get_tlv_data(), |extension_type| {
+        required_account_extensions.push(extension_type);
+        Ok(())
+    })?;
+
+    // ATAs always have the ImmutableOwner extension
+    if !required_account_extensions.contains(&ExtensionType::ImmutableOwner) {
+        required_account_extensions.push(ExtensionType::ImmutableOwner);
+    }
+
+    // If the token account already shares the same extensions as the mint,
+    // it does not need to be re-created
+    let in_good_state = current_account_extensions.len() == required_account_extensions.len()
+        && required_account_extensions
+            .iter()
+            .all(|item| current_account_extensions.contains(item));
+
+    if in_good_state {
+        return Err(TokenWrapError::EscrowInGoodState.into());
+    }
+
+    // Close old escrow account
+    let bump_seed = [bump];
+    let signer_seeds = get_wrapped_mint_authority_signer_seeds(wrapped_mint.key, &bump_seed);
+
+    invoke_signed(
+        &spl_token_2022_interface::instruction::close_account(
+            escrow_account.owner,
+            escrow_account.key,
+            destination_account.key,
+            wrapped_mint_authority.key,
+            &[],
+        )?,
+        &[
+            escrow_account.clone(),
+            destination_account.clone(),
+            wrapped_mint_authority.clone(),
+        ],
+        &[&signer_seeds],
+    )?;
+
+    Ok(())
+}
+
+type FieldExtractor = Vec<(Field, fn(&TokenMetadata) -> &str)>;
+
+fn update_fields_if_changed<'a>(
+    token_program: &Pubkey,
+    mint: &AccountInfo<'a>,
+    authority: &AccountInfo<'a>,
+    fields: FieldExtractor,
+    wrapped_metadata: &TokenMetadata,
+    unwrapped_metadata: &TokenMetadata,
+    signer_seeds: &[&[&[u8]]],
+) -> ProgramResult {
+    for (field, extractor) in fields {
+        let current_value = extractor(wrapped_metadata);
+        let new_value = extractor(unwrapped_metadata);
+        if current_value != new_value {
+            invoke_signed(
+                &update_field(
+                    token_program,
+                    mint.key,
+                    authority.key,
+                    field.clone(),
+                    new_value.to_string(),
+                ),
+                &[mint.clone(), authority.clone()],
+                signer_seeds,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Processes [`SyncMetadataToToken2022`](enum.TokenWrapInstruction.html)
+/// instruction.
+pub fn process_sync_metadata_to_token_2022(accounts: &[AccountInfo]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let wrapped_mint_info = next_account_info(account_info_iter)?;
+    let wrapped_mint_authority_info = next_account_info(account_info_iter)?;
+    let unwrapped_mint_info = next_account_info(account_info_iter)?;
+    let token_program_info = next_account_info(account_info_iter)?;
+    let source_metadata_info = account_info_iter.next();
+    let owner_program_info = account_info_iter.next();
+
+    if *token_program_info.key != spl_token_2022_interface::id() {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    if *wrapped_mint_info.owner != spl_token_2022_interface::id() {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    let (expected_wrapped_mint, _) = get_wrapped_mint_address_with_seed(
+        unwrapped_mint_info.key,
+        &spl_token_2022_interface::id(),
+    );
+    if *wrapped_mint_info.key != expected_wrapped_mint {
+        return Err(TokenWrapError::WrappedMintMismatch.into());
+    }
+    let (expected_authority, authority_bump) =
+        get_wrapped_mint_authority_with_seed(wrapped_mint_info.key);
+    if *wrapped_mint_authority_info.key != expected_authority {
+        return Err(TokenWrapError::MintAuthorityMismatch.into());
+    }
+
+    let unwrapped_metadata = extract_token_metadata(
+        unwrapped_mint_info,
+        source_metadata_info,
+        owner_program_info,
+    )?;
+
+    let authority_bump_seed = [authority_bump];
+    let authority_signer_seeds =
+        get_wrapped_mint_authority_signer_seeds(wrapped_mint_info.key, &authority_bump_seed);
+
+    let wrapped_mint_data = wrapped_mint_info.try_borrow_data()?;
+    let wrapped_mint_metadata = PodStateWithExtensions::<PodMint>::unpack(&wrapped_mint_data)?
+        .get_variable_len_extension::<TokenMetadata>()
+        .ok();
+    drop(wrapped_mint_data);
+
+    let cpi_accounts = [
+        wrapped_mint_info.clone(),
+        wrapped_mint_authority_info.clone(),
+    ];
+
+    if let Some(wrapped_metadata) = wrapped_mint_metadata {
+        // The metadata extension is initialized. Update the fields that have changed.
+        // Note that mint and update authority cannot change as that is governed by
+        // token-wrap.
+
+        // --- Sync base fields ---
+        let base_fields: FieldExtractor = vec![
+            (Field::Name, |m| &m.name),
+            (Field::Symbol, |m| &m.symbol),
+            (Field::Uri, |m| &m.uri),
+        ];
+
+        update_fields_if_changed(
+            token_program_info.key,
+            wrapped_mint_info,
+            wrapped_mint_authority_info,
+            base_fields,
+            &wrapped_metadata,
+            &unwrapped_metadata,
+            &[&authority_signer_seeds],
+        )?;
+
+        // --- Sync additional metadata fields ---
+        let mut wrapped_meta_map: HashMap<String, String> =
+            wrapped_metadata.additional_metadata.into_iter().collect();
+
+        for (key, value) in &unwrapped_metadata.additional_metadata {
+            // Update if the key is not present or if the value is different
+            if wrapped_meta_map.get(key) != Some(value) {
+                invoke_signed(
+                    &update_field(
+                        token_program_info.key,
+                        wrapped_mint_info.key,
+                        wrapped_mint_authority_info.key,
+                        Field::Key(key.clone()),
+                        value.clone(),
+                    ),
+                    &cpi_accounts,
+                    &[&authority_signer_seeds],
+                )?;
+            }
+            // Remove the key from the map so we can track deletions
+            wrapped_meta_map.remove(key);
+        }
+
+        // Any keys remaining in the map no longer exist in the source, so remove them
+        for key in wrapped_meta_map.keys() {
+            invoke_signed(
+                &remove_key(
+                    token_program_info.key,
+                    wrapped_mint_info.key,
+                    wrapped_mint_authority_info.key,
+                    key.clone(),
+                    false,
+                ),
+                &cpi_accounts,
+                &[&authority_signer_seeds],
+            )?;
+        }
+    } else {
+        // The wrapped mint does not have the metadata extension. Initialize it with the
+        // fields from the unwrapped mint.
+        invoke_signed(
+            &initialize_token_metadata(
+                token_program_info.key,
+                wrapped_mint_info.key,
+                wrapped_mint_authority_info.key,
+                wrapped_mint_info.key,
+                wrapped_mint_authority_info.key,
+                unwrapped_metadata.name.clone(),
+                unwrapped_metadata.symbol.clone(),
+                unwrapped_metadata.uri.clone(),
+            ),
+            &cpi_accounts,
+            &[&authority_signer_seeds],
+        )?;
+
+        // After initializing, add the additional metadata fields.
+        for (key, value) in &unwrapped_metadata.additional_metadata {
+            invoke_signed(
+                &update_field(
+                    token_program_info.key,
+                    wrapped_mint_info.key,
+                    wrapped_mint_authority_info.key,
+                    Field::Key(key.clone()),
+                    value.clone(),
+                ),
+                &cpi_accounts,
+                &[&authority_signer_seeds],
+            )?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Processes [`SyncMetadataToSplToken`](enum.TokenWrapInstruction.html)
+/// instruction.
+pub fn process_sync_metadata_to_spl_token(accounts: &[AccountInfo]) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let metaplex_metadata_info = next_account_info(account_info_iter)?;
+    let wrapped_mint_authority_info = next_account_info(account_info_iter)?;
+    let wrapped_mint_info = next_account_info(account_info_iter)?;
+    let unwrapped_mint_info = next_account_info(account_info_iter)?;
+    let metaplex_program_info = next_account_info(account_info_iter)?;
+    let system_program_info = next_account_info(account_info_iter)?;
+    let rent_sysvar_info = next_account_info(account_info_iter)?;
+    let source_metadata_info = account_info_iter.next();
+    let owner_program_info = account_info_iter.next();
+
+    // ====== Validations ======
+
+    if *wrapped_mint_info.owner != spl_token::id() {
+        return Err(TokenWrapError::NoSyncingToToken2022.into());
+    }
+
+    let (expected_wrapped_mint, _) =
+        get_wrapped_mint_address_with_seed(unwrapped_mint_info.key, &spl_token::id());
+    if *wrapped_mint_info.key != expected_wrapped_mint {
+        return Err(TokenWrapError::WrappedMintMismatch.into());
+    }
+
+    let (expected_authority, authority_bump) =
+        get_wrapped_mint_authority_with_seed(wrapped_mint_info.key);
+    if *wrapped_mint_authority_info.key != expected_authority {
+        return Err(TokenWrapError::MintAuthorityMismatch.into());
+    }
+
+    let (expected_metaplex_metadata, _) = MetaplexMetadata::find_pda(wrapped_mint_info.key);
+    if *metaplex_metadata_info.key != expected_metaplex_metadata {
+        return Err(TokenWrapError::MetaplexMetadataMismatch.into());
+    }
+
+    if metaplex_program_info.key != &mpl_token_metadata::ID {
+        return Err(ProgramError::IncorrectProgramId);
+    }
+
+    // ====== Extract metadata from source ======
+
+    let unwrapped_metadata = extract_token_metadata(
+        unwrapped_mint_info,
+        source_metadata_info,
+        owner_program_info,
+    )?;
+
+    // ====== Upsert logic ======
+
+    let authority_bump_seed = [authority_bump];
+    let authority_signer_seeds =
+        get_wrapped_mint_authority_signer_seeds(wrapped_mint_info.key, &authority_bump_seed);
+
+    let new_metadata = token_2022_metadata_to_metaplex(&unwrapped_metadata)?;
+
+    // If the Metaplex metadata account is uninitialized, create a new one. The user
+    // is expected to have pre-funded the wrapped_mint_authority PDA. This program
+    // will use that PDA as the payer for the CPI.
+    if metaplex_metadata_info.data_is_empty() {
+        let create_ix = CreateMetadataAccountV3 {
+            metadata: *metaplex_metadata_info.key,
+            mint: *wrapped_mint_info.key,
+            mint_authority: *wrapped_mint_authority_info.key,
+            payer: *wrapped_mint_authority_info.key,
+            update_authority: (*wrapped_mint_authority_info.key, true),
+            system_program: *system_program_info.key,
+            rent: Some(*rent_sysvar_info.key),
+        }
+        .instruction(CreateMetadataAccountV3InstructionArgs {
+            data: new_metadata,
+            is_mutable: true,
+            collection_details: None,
+        });
+
+        invoke_signed(
+            &create_ix,
+            &[
+                metaplex_metadata_info.clone(),
+                wrapped_mint_info.clone(),
+                wrapped_mint_authority_info.clone(),
+                system_program_info.clone(),
+                rent_sysvar_info.clone(),
+            ],
+            &[&authority_signer_seeds],
+        )?;
+    } else {
+        // The Metaplex metadata account is initialized, so update the fields
+        let update_ix = UpdateMetadataAccountV2 {
+            metadata: *metaplex_metadata_info.key,
+            update_authority: *wrapped_mint_authority_info.key,
+        }
+        .instruction(UpdateMetadataAccountV2InstructionArgs {
+            data: Some(new_metadata),
+            // Cannot trust the additional metadata fields on token-2022 & external program case,
+            // so simplifying this and not updating it in any case
+            primary_sale_happened: None,
+            new_update_authority: None,
+            is_mutable: None,
+        });
+        invoke_signed(
+            &update_ix,
+            &[
+                metaplex_metadata_info.clone(),
+                wrapped_mint_authority_info.clone(),
+            ],
+            &[&authority_signer_seeds],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Processes [`SetCanonicalPointer`](enum.TokenWrapInstruction.html)
+/// instruction.
+pub fn process_set_canonical_pointer(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    new_program_id: Pubkey,
+) -> ProgramResult {
+    let account_info_iter = &mut accounts.iter();
+    let unwrapped_mint_authority_info = next_account_info(account_info_iter)?;
+    let canonical_pointer_info = next_account_info(account_info_iter)?;
+    let unwrapped_mint_info = next_account_info(account_info_iter)?;
+    let _system_program_info = next_account_info(account_info_iter)?;
+
+    if !unwrapped_mint_authority_info.is_signer {
+        return Err(ProgramError::MissingRequiredSignature);
+    }
+
+    if unwrapped_mint_info.owner != &spl_token::id()
+        && unwrapped_mint_info.owner != &spl_token_2022_interface::id()
+    {
+        return Err(ProgramError::InvalidAccountOwner);
+    }
+
+    let mint_data = unwrapped_mint_info.try_borrow_data()?;
+    let mint_state = PodStateWithExtensions::<PodMint>::unpack(&mint_data)?;
+    let mint_authority = mint_state
+        .base
+        .mint_authority
+        .ok_or(ProgramError::InvalidAccountData)
+        .inspect_err(|_| {
+            msg!("Cannot create/update pointer for unwrapped mint if does not have an authority");
+        })?;
+
+    if mint_authority != *unwrapped_mint_authority_info.key {
+        return Err(ProgramError::IncorrectAuthority);
+    }
+
+    let (expected_pointer_address, bump) =
+        get_canonical_pointer_address_with_seed(unwrapped_mint_info.key);
+    if *canonical_pointer_info.key != expected_pointer_address {
+        msg!(
+            "Error: canonical pointer address {} does not match expected address {}",
+            canonical_pointer_info.key,
+            expected_pointer_address
+        );
+        return Err(ProgramError::InvalidArgument);
+    }
+
+    // If pointer does not exist, initialize it
+    if canonical_pointer_info.data_is_empty() {
+        let space = mem::size_of::<CanonicalDeploymentPointer>();
+        let rent_required = Rent::get()?.minimum_balance(space);
+
+        if canonical_pointer_info.lamports() < rent_required {
+            msg!(
+                "Error: canonical pointer PDA requires pre-funding of {} lamports",
+                rent_required
+            );
+            Err(ProgramError::AccountNotRentExempt)?
+        }
+
+        let bump_seed = [bump];
+        let signer_seeds =
+            get_canonical_pointer_address_signer_seeds(unwrapped_mint_info.key, &bump_seed);
+        invoke_signed(
+            &allocate(canonical_pointer_info.key, space as u64),
+            core::slice::from_ref(canonical_pointer_info),
+            &[&signer_seeds],
+        )?;
+        invoke_signed(
+            &assign(canonical_pointer_info.key, program_id),
+            core::slice::from_ref(canonical_pointer_info),
+            &[&signer_seeds],
+        )?;
+    }
+
+    // Set data within canonical pointer PDA
+
+    let mut pointer_data = canonical_pointer_info.try_borrow_mut_data()?;
+    let state = bytemuck::from_bytes_mut::<CanonicalDeploymentPointer>(&mut pointer_data);
+    state.program_id = new_program_id;
+
+    Ok(())
+}
+
+/// Instruction processor
+pub fn process_instruction(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    input: &[u8],
+) -> ProgramResult {
+    match TokenWrapInstruction::unpack(input)? {
+        TokenWrapInstruction::CreateMint { idempotent } => {
+            // === DEVELOPER CUSTOMIZATION POINT ===
+            // To use custom mint creation logic, update the mint customizer argument
+            msg!("Instruction: CreateMint");
+            process_create_mint::<DefaultToken2022Customizer>(program_id, accounts, idempotent)
+        }
+        TokenWrapInstruction::Wrap { amount } => {
+            msg!("Instruction: Wrap");
+            process_wrap(accounts, amount)
+        }
+        TokenWrapInstruction::Unwrap { amount } => {
+            msg!("Instruction: Unwrap");
+            process_unwrap(accounts, amount)
+        }
+        TokenWrapInstruction::CloseStuckEscrow => {
+            msg!("Instruction: CloseStuckEscrow");
+            process_close_stuck_escrow(accounts)
+        }
+        TokenWrapInstruction::SyncMetadataToToken2022 => {
+            msg!("Instruction: SyncMetadataToToken2022");
+            process_sync_metadata_to_token_2022(accounts)
+        }
+        TokenWrapInstruction::SyncMetadataToSplToken => {
+            msg!("Instruction: SyncMetadataToSplToken");
+            process_sync_metadata_to_spl_token(accounts)
+        }
+        TokenWrapInstruction::SetCanonicalPointer {
+            program_id: new_program_id,
+        } => {
+            msg!("Instruction: SetCanonicalPointer");
+            process_set_canonical_pointer(program_id, accounts, new_program_id)
+        }
+    }
+}

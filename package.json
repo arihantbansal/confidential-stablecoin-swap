@@ -1,0 +1,27 @@
+{
+  "name": "confidential-stablecoin",
+  "private": true,
+  "packageManager": "pnpm@10.15.0",
+  "workspaces": [
+    "web",
+    "runtime"
+  ],
+  "scripts": {
+    "dev": "pnpm --filter web dev",
+    "build": "pnpm --filter web build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter web test",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "local:start": "bash scripts/start-local.sh",
+    "local:build": "bash scripts/build-wrapper.sh",
+    "local:setup": "node scripts/load-local.mjs && pnpm --filter @confidential-stablecoin/runtime setup",
+    "local:roundtrip": "pnpm --filter @confidential-stablecoin/runtime roundtrip"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.13"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

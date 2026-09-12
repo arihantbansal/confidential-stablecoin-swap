@@ -1,0 +1,51 @@
+{
+  "inspectedAt": "2026-09-12",
+  "rpc": "https://api.devnet.solana.com",
+  "addresses": [
+    "TwRapQCDhWkZRrDaHfZGuHxkZ91gHDRkyuzNqeU5MgR",
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",
+    "ZkE1Gama1Proof11111111111111111111111111111"
+  ],
+  "limitation": "Read-only observation; no proof or transfer executed.",
+  "response": {
+    "jsonrpc": "2.0",
+    "result": {
+      "context": {
+        "apiVersion": "4.3.0-rc.0",
+        "slot": 497070240
+      },
+      "value": [
+        null,
+        {
+          "data": {
+            "parsed": {
+              "info": {
+                "programData": "DoU57AYuPFu2QU514RktNPG22QhApEjnKxnBcu4BHDTY"
+              },
+              "type": "program"
+            },
+            "program": "bpf-upgradeable-loader",
+            "space": 36
+          },
+          "executable": true,
+          "lamports": 1159846,
+          "owner": "BPFLoaderUpgradeab1e11111111111111111111111",
+          "rentEpoch": 18446744073709551615,
+          "space": 36
+        },
+        {
+          "data": [
+            "emtfZWxnYW1hbF9wcm9vZl9wcm9ncmFt",
+            "base64"
+          ],
+          "executable": true,
+          "lamports": 1,
+          "owner": "NativeLoader1111111111111111111111111111111",
+          "rentEpoch": 18446744073709551615,
+          "space": 24
+        }
+      ]
+    },
+    "id": 1
+  }
+}

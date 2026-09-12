@@ -1,0 +1,22 @@
+{
+    "private": true,
+    "scripts": {
+        "generate:clients": "tsx program/idl.ts && codama run --all"
+    },
+    "devDependencies": {
+        "@changesets/cli": "^3.0.2",
+        "@codama/renderers-js": "^2.3.1",
+        "@solana-program/system": "^0.14.1",
+        "@solana/sysvars": "^8.2.0",
+        "@solana/prettier-config-solana": "0.0.7",
+        "@types/node": "^26.5.0",
+        "codama": "^1.8.0",
+        "tsx": "^4.23.12",
+        "typescript": "^6.0.3"
+    },
+    "engines": {
+        "node": ">=v20.0.0"
+    },
+    "packageManager": "pnpm@10.15.1",
+    "prettier": "@solana/prettier-config-solana"
+}

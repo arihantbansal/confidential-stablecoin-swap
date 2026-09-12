@@ -1,0 +1,1011 @@
+{
+  "kind": "rootNode",
+  "standard": "codama",
+  "version": "1.6.0",
+  "program": {
+    "kind": "programNode",
+    "name": "tokenWrap",
+    "publicKey": "TwRapQCDhWkZRrDaHfZGuHxkZ91gHDRkyuzNqeU5MgR",
+    "version": "0.1.0",
+    "accounts": [
+      {
+        "kind": "accountNode",
+        "name": "backpointer",
+        "size": 32,
+        "docs": [
+          "Account to store the address of the unwrapped mint."
+        ],
+        "data": {
+          "kind": "structTypeNode",
+          "fields": [
+            {
+              "kind": "structFieldTypeNode",
+              "name": "unwrappedMint",
+              "type": {
+                "kind": "publicKeyTypeNode"
+              }
+            }
+          ]
+        },
+        "pda": {
+          "kind": "pdaLinkNode",
+          "name": "backpointer"
+        }
+      }
+    ],
+    "instructions": [
+      {
+        "kind": "instructionNode",
+        "name": "createMint",
+        "docs": [
+          "Create a wrapped token mint. Assumes caller has pre-funded wrapped mint",
+          "and backpointer account. Supports both directions:",
+          "- spl-token to token-2022",
+          "- token-2022 to spl-token",
+          "- token-2022 to token-2022 w/ new extensions"
+        ],
+        "optionalAccountStrategy": "programId",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMint",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              " Unallocated wrapped mint account to create (PDA), address must be:",
+              "`get_wrapped_mint_address(unwrapped_mint_address, wrapped_token_program_id)`"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "backpointer",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Unallocated wrapped backpointer account to create (PDA)",
+              "`get_wrapped_mint_backpointer_address(wrapped_mint_address)`"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The existing mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "systemProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true,
+            "docs": [
+              "The system program"
+            ],
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "11111111111111111111111111111111"
+            }
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedTokenProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The token program used to create the wrapped mint"
+            ]
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "defaultValueStrategy": "omitted",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 0
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "idempotent",
+            "defaultValueStrategy": "optional",
+            "docs": [
+              "Whether the creation should fail if the wrapped mint already exists."
+            ],
+            "type": {
+              "kind": "booleanTypeNode",
+              "size": {
+                "kind": "numberTypeNode",
+                "format": "u8",
+                "endian": "le"
+              }
+            },
+            "defaultValue": {
+              "kind": "booleanValueNode",
+              "boolean": false
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "kind": "instructionNode",
+        "name": "wrap",
+        "docs": [
+          "Move a user's unwrapped tokens into an escrow account and mint the same",
+          "number of wrapped tokens into the provided account."
+        ],
+        "optionalAccountStrategy": "programId",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "recipientWrappedTokenAccount",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The token account to receive the wrapped tokens."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMint",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped mint, must be initialized, address must be:",
+              "`get_wrapped_mint_address(unwrapped_mint_address, wrapped_token_program_id)`"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMintAuthority",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The PDA authority of the wrapped mint, address must be",
+              "`get_wrapped_mint_authority(wrapped_mint)`"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedTokenProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The token program of the unwrapped tokens."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedTokenProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The token program of the wrapped tokens."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedTokenAccount",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The source token account for the unwrapped tokens."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The mint of the unwrapped tokens."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedEscrow",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The escrow account that holds the unwrapped tokens.",
+              "Address must be ATA: get_escrow_address(unwrapped_mint, unwrapped_token_program, wrapped_token_program)"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "transferAuthority",
+            "isWritable": false,
+            "isSigner": "either",
+            "isOptional": false,
+            "docs": [
+              "The authority to transfer the unwrapped tokens."
+            ],
+            "defaultValue": {
+              "kind": "identityValueNode"
+            }
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "defaultValueStrategy": "omitted",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 1
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "amount",
+            "docs": [
+              "The amount of tokens to wrap."
+            ],
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u64",
+              "endian": "le"
+            }
+          }
+        ],
+        "remainingAccounts": [
+          {
+            "kind": "instructionRemainingAccountsNode",
+            "isOptional": true,
+            "isSigner": true,
+            "value": {
+              "kind": "argumentValueNode",
+              "name": "multiSigners"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "kind": "instructionNode",
+        "name": "unwrap",
+        "docs": [
+          "Burns wrapped tokens and releases unwrapped tokens from the escrow account."
+        ],
+        "optionalAccountStrategy": "programId",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedEscrow",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The escrow account holding the unwrapped tokens.",
+              "Address must be ATA: get_escrow_address(unwrapped_mint, unwrapped_token_program, wrapped_token_program)"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "recipientUnwrappedToken",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The account to receive the unwrapped tokens."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMintAuthority",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The PDA authority of the wrapped mint,",
+              "address must be: `get_wrapped_mint_authority(wrapped_mint)`"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The mint of the unwrapped tokens"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedTokenProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The token program of the wrapped tokens"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedTokenProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The token program of the unwrapped tokens"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedTokenAccount",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The source token account for the wrapped tokens"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMint",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "The wrapped mint account, address must be:",
+              "`get_wrapped_mint_address(unwrapped_mint_address, wrapped_token_program_id)`"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "transferAuthority",
+            "isWritable": false,
+            "isSigner": "either",
+            "isOptional": false,
+            "docs": [
+              "The authority to burn the wrapped tokens."
+            ],
+            "defaultValue": {
+              "kind": "identityValueNode"
+            }
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "defaultValueStrategy": "omitted",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 2
+            }
+          },
+          {
+            "kind": "instructionArgumentNode",
+            "name": "amount",
+            "docs": [
+              "The amount of tokens to unwrap."
+            ],
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u64",
+              "endian": "le"
+            }
+          }
+        ],
+        "remainingAccounts": [
+          {
+            "kind": "instructionRemainingAccountsNode",
+            "isOptional": true,
+            "isSigner": true,
+            "value": {
+              "kind": "argumentValueNode",
+              "name": "multiSigners"
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "kind": "instructionNode",
+        "name": "closeStuckEscrow",
+        "docs": [
+          "Closes a stuck escrow `ATA`. This is for the edge case where an",
+          "unwrapped mint with a close authority is closed and then a new mint",
+          "is created at the same address but with a different size, leaving",
+          "the escrow `ATA` in a bad state.",
+          "This instruction will close the old escrow `ATA`, returning the lamports",
+          "to the destination account. It will only work if the current escrow has",
+          "different extensions than the mint. The client is then responsible",
+          "for calling `create_associated_token_account` to recreate it."
+        ],
+        "optionalAccountStrategy": "programId",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "escrow",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Escrow account to close (ATA)"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "destination",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Destination for lamports from closed account"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Unwrapped mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMintAuthority",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped mint authority (PDA)"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "token2022Program",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true,
+            "docs": [
+              "Token-2022 program"
+            ],
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+            }
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "defaultValueStrategy": "omitted",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 3
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "kind": "instructionNode",
+        "name": "syncMetadataToToken2022",
+        "docs": [
+          "This instruction copies the metadata fields from an unwrapped mint to",
+          "its wrapped mint `TokenMetadata` extension.",
+          "",
+          "Supports (unwrapped to wrapped):",
+          "- Token-2022 to Token-2022",
+          "- SPL-token to Token-2022",
+          "",
+          "If source mint is a Token-2022, it must have a `MetadataPointer` and the",
+          "account it points to must be provided. If source mint is an SPL-Token,",
+          "the `Metaplex` PDA must be provided.",
+          "",
+          "If the `TokenMetadata` extension on the wrapped mint if not present, it",
+          "will initialize it. The client is responsible for funding the wrapped",
+          "mint account with enough lamports to cover the rent for the",
+          "additional space required by the `TokenMetadata` extension and/or",
+          "metadata sync."
+        ],
+        "optionalAccountStrategy": "programId",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMint",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMintAuthority",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped mint authority PDA"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Unwrapped mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "token2022Program",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Token-2022 program"
+            ],
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+            }
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "sourceMetadata",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true,
+            "docs": [
+              "Source metadata account. Required if metadata pointer",
+              "indicates external account."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "ownerProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true,
+            "docs": [
+              "Owner program. Required when metadata account is",
+              "owned by a third-party program."
+            ]
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "defaultValueStrategy": "omitted",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 4
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      },
+      {
+        "kind": "instructionNode",
+        "name": "syncMetadataToSplToken",
+        "docs": [
+          "This instruction copies the metadata fields from an unwrapped mint to",
+          "its wrapped mint `Metaplex` metadata account.",
+          "",
+          "Supports (unwrapped to wrapped):",
+          "- Token-2022 to SPL-token",
+          "- SPL-token to SPL-token",
+          "",
+          "This instruction will create the `Metaplex` metadata account if it",
+          "doesn't exist, or update it if it does. The `wrapped_mint_authority`",
+          "PDA must be pre-funded with enough lamports to cover the rent for",
+          "the `Metaplex` metadata account's creation or updates, as it will",
+          "act as the payer for the `Metaplex` program CPI.",
+          "",
+          "If source mint is a Token-2022, it must have a `MetadataPointer` and the",
+          "account it points to must be provided. If source mint is an SPL-Token,",
+          "the `Metaplex` PDA must be provided."
+        ],
+        "optionalAccountStrategy": "programId",
+        "accounts": [
+          {
+            "kind": "instructionAccountNode",
+            "name": "metaplexMetadata",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "`Metaplex` metadata account"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMintAuthority",
+            "isWritable": true,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped mint authority (PDA)"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "wrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Wrapped SPL Token mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "unwrappedMint",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Unwrapped mint"
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "metaplexProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "`Metaplex` Token Metadata Program"
+            ],
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s"
+            }
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "systemProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "System program"
+            ],
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "11111111111111111111111111111111"
+            }
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "rentSysvar",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": false,
+            "docs": [
+              "Rent sysvar"
+            ],
+            "defaultValue": {
+              "kind": "publicKeyValueNode",
+              "publicKey": "SysvarRent111111111111111111111111111111111"
+            }
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "sourceMetadata",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true,
+            "docs": [
+              "Source metadata account. Required if unwrapped mint",
+              "is an SPL-Token or, if a Token-2022, its metadata pointer indicates",
+              "an external account."
+            ]
+          },
+          {
+            "kind": "instructionAccountNode",
+            "name": "ownerProgram",
+            "isWritable": false,
+            "isSigner": false,
+            "isOptional": true,
+            "docs": [
+              "Owner program. Required when metadata account is",
+              "owned by a third-party program."
+            ]
+          }
+        ],
+        "arguments": [
+          {
+            "kind": "instructionArgumentNode",
+            "name": "discriminator",
+            "defaultValueStrategy": "omitted",
+            "type": {
+              "kind": "numberTypeNode",
+              "format": "u8",
+              "endian": "le"
+            },
+            "defaultValue": {
+              "kind": "numberValueNode",
+              "number": 5
+            }
+          }
+        ],
+        "discriminators": [
+          {
+            "kind": "fieldDiscriminatorNode",
+            "name": "discriminator",
+            "offset": 0
+          }
+        ]
+      }
+    ],
+    "definedTypes": [],
+    "pdas": [
+      {
+        "kind": "pdaNode",
+        "name": "backpointer",
+        "seeds": [
+          {
+            "kind": "constantPdaSeedNode",
+            "type": {
+              "kind": "stringTypeNode",
+              "encoding": "utf8"
+            },
+            "value": {
+              "kind": "stringValueNode",
+              "string": "backpointer"
+            }
+          },
+          {
+            "kind": "variablePdaSeedNode",
+            "name": "wrappedMint",
+            "type": {
+              "kind": "publicKeyTypeNode"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "pdaNode",
+        "name": "wrappedMint",
+        "seeds": [
+          {
+            "kind": "constantPdaSeedNode",
+            "type": {
+              "kind": "stringTypeNode",
+              "encoding": "utf8"
+            },
+            "value": {
+              "kind": "stringValueNode",
+              "string": "mint"
+            }
+          },
+          {
+            "kind": "variablePdaSeedNode",
+            "name": "unwrappedMint",
+            "type": {
+              "kind": "publicKeyTypeNode"
+            }
+          },
+          {
+            "kind": "variablePdaSeedNode",
+            "name": "wrappedTokenProgram",
+            "type": {
+              "kind": "publicKeyTypeNode"
+            }
+          }
+        ]
+      },
+      {
+        "kind": "pdaNode",
+        "name": "wrappedMintAuthority",
+        "seeds": [
+          {
+            "kind": "constantPdaSeedNode",
+            "type": {
+              "kind": "stringTypeNode",
+              "encoding": "utf8"
+            },
+            "value": {
+              "kind": "stringValueNode",
+              "string": "authority"
+            }
+          },
+          {
+            "kind": "variablePdaSeedNode",
+            "name": "wrappedMint",
+            "type": {
+              "kind": "publicKeyTypeNode"
+            }
+          }
+        ]
+      }
+    ],
+    "events": [],
+    "errors": [
+      {
+        "kind": "errorNode",
+        "name": "wrappedMintMismatch",
+        "code": 0,
+        "message": "Wrapped mint account address does not match expected PDA"
+      },
+      {
+        "kind": "errorNode",
+        "name": "backpointerMismatch",
+        "code": 1,
+        "message": "Wrapped backpointer account address does not match expected PDA"
+      },
+      {
+        "kind": "errorNode",
+        "name": "zeroWrapAmount",
+        "code": 2,
+        "message": "Wrap amount should be positive"
+      },
+      {
+        "kind": "errorNode",
+        "name": "mintAuthorityMismatch",
+        "code": 3,
+        "message": "Wrapped mint authority does not match expected PDA"
+      },
+      {
+        "kind": "errorNode",
+        "name": "escrowOwnerMismatch",
+        "code": 4,
+        "message": "Unwrapped escrow token owner is not set to expected PDA"
+      },
+      {
+        "kind": "errorNode",
+        "name": "invalidWrappedMintOwner",
+        "code": 5,
+        "message": "Wrapped mint account owner is not the expected token program"
+      },
+      {
+        "kind": "errorNode",
+        "name": "invalidBackpointerOwner",
+        "code": 6,
+        "message": "Wrapped backpointer account owner is not the expected token wrap program"
+      },
+      {
+        "kind": "errorNode",
+        "name": "escrowMismatch",
+        "code": 7,
+        "message": "Escrow account address does not match expected ATA"
+      },
+      {
+        "kind": "errorNode",
+        "name": "escrowInGoodState",
+        "code": 8,
+        "message": "The escrow account is in a good state and cannot be recreated"
+      },
+      {
+        "kind": "errorNode",
+        "name": "unwrappedMintHasNoMetadata",
+        "code": 9,
+        "message": "Unwrapped mint does not have the TokenMetadata extension"
+      },
+      {
+        "kind": "errorNode",
+        "name": "metaplexMetadataMismatch",
+        "code": 10,
+        "message": "Metaplex metadata account address does not match expected PDA"
+      },
+      {
+        "kind": "errorNode",
+        "name": "metadataPointerMissing",
+        "code": 11,
+        "message": "Metadata pointer extension missing on mint"
+      },
+      {
+        "kind": "errorNode",
+        "name": "metadataPointerUnset",
+        "code": 12,
+        "message": "Metadata pointer is unset (None)"
+      },
+      {
+        "kind": "errorNode",
+        "name": "metadataPointerMismatch",
+        "code": 13,
+        "message": "Provided source metadata account does not match pointer"
+      },
+      {
+        "kind": "errorNode",
+        "name": "externalProgramReturnedNoData",
+        "code": 14,
+        "message": "External metadata program returned no data"
+      },
+      {
+        "kind": "errorNode",
+        "name": "noSyncingToToken2022",
+        "code": 15,
+        "message": "Instruction can only be used with spl-token wrapped mints"
+      }
+    ],
+    "constants": []
+  },
+  "additionalPrograms": []
+}

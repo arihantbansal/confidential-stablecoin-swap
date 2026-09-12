@@ -1,0 +1,32 @@
+{
+  "name": "@confidential-stablecoin/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local-only Token-2022 confidential lifecycle tooling (loopback RPC only)",
+  "imports": {
+    "#runtime/*": "./src/*.ts"
+  },
+  "scripts": {
+    "setup": "node src/setup.ts",
+    "roundtrip": "node src/run-roundtrip.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@solana-program/system": "^0.14.1",
+    "@solana-program/token": "^0.16.0",
+    "@solana-program/token-2022": "^0.17.0",
+    "@solana/kit": "^8.3.0",
+    "@solana/kit-plugin-rpc": "^0.19.0",
+    "@solana/kit-plugin-signer": "^0.19.0",
+    "@solana/zk-sdk": "^0.5.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  },
+  "exports": {
+    "./client": "./src/client.ts",
+    "./send": "./src/send.ts"
+  }
+}
