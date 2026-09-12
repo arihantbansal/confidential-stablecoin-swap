@@ -20,7 +20,10 @@ export interface LocalAsset {
 }
 
 export async function loadManifest(): Promise<LocalManifest> {
-  const response = await fetch("/local.json", { cache: "no-store" });
+  const response = await fetch("/local.json", {
+    cache: "no-store",
+    signal: AbortSignal.timeout(10000),
+  });
   if (!response.ok) throw new Error("Run local setup first.");
   const manifest: LocalManifest = await response.json();
   if (
@@ -33,7 +36,9 @@ export async function loadManifest(): Promise<LocalManifest> {
   const assets = manifest.assets.map((asset) => {
     if (
       !["USDC", "USDT", "CASH"].includes(asset.symbol) ||
-      !Number.isInteger(asset.decimals)
+      !Number.isInteger(asset.decimals) ||
+      asset.decimals < 0 ||
+      asset.decimals > 255
     )
       throw new Error("Invalid local asset metadata.");
     return {

@@ -1,6 +1,7 @@
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { XIcon } from "lucide-react";
 import type * as React from "react";
+import { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
@@ -45,19 +46,55 @@ function DialogContent({
   className,
   children,
   showCloseButton = true,
+  returnFocus = false,
+  onOpenAutoFocus,
+  onCloseAutoFocus,
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean;
+  /**
+   * Restore focus to the element that was focused before the dialog opened.
+   * Enable for programmatically opened dialogs without a Radix Trigger.
+   * Leave unset for Trigger dialogs to preserve Radix focus return.
+   */
+  returnFocus?: boolean;
 }) {
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+
+  function handleOpenAutoFocus(event: Event) {
+    if (returnFocus) {
+      const active = document.activeElement;
+      previousFocusRef.current = active instanceof HTMLElement ? active : null;
+    }
+    onOpenAutoFocus?.(event);
+  }
+
+  function handleCloseAutoFocus(event: Event) {
+    onCloseAutoFocus?.(event);
+    if (!returnFocus) {
+      return;
+    }
+    const target = previousFocusRef.current;
+    previousFocusRef.current = null;
+    if (target?.isConnected) {
+      if (!event.defaultPrevented) {
+        event.preventDefault();
+      }
+      target.focus();
+    }
+  }
+
   return (
     <DialogPortal data-slot="dialog-portal">
       <DialogOverlay />
       <DialogPrimitive.Content
         data-slot="dialog-content"
         className={cn(
-          "fixed top-[50%] left-[50%] z-50 grid w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 rounded-lg border bg-background p-6 shadow-lg outline-none sm:max-w-lg",
+          "fixed top-[50%] left-[50%] z-50 grid max-h-[85dvh] w-full max-w-[calc(100%-2rem)] translate-x-[-50%] translate-y-[-50%] gap-4 overflow-y-auto rounded-lg border bg-background p-6 shadow-lg outline-none sm:max-w-lg",
           className,
         )}
+        onOpenAutoFocus={handleOpenAutoFocus}
+        onCloseAutoFocus={handleCloseAutoFocus}
         {...props}
       >
         {children}

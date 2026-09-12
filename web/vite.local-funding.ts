@@ -9,6 +9,104 @@ function reply(response: ServerResponse, status: number, body: object) {
   response.end(JSON.stringify(body));
 }
 
+const LOCAL_RPC_URL = "http://127.0.0.1:8899";
+const RPC_TIMEOUT_MS = 5_000;
+const AIRDROP_TIMEOUT_MS = 30_000;
+
+class AirdropTimeoutError extends Error {
+  constructor(public readonly signature: string) {
+    super(`Airdrop confirmation timed out: ${signature}`);
+  }
+}
+
+function parseDeployment(): {
+  rpcHttpUrl: string;
+  assets: Array<{
+    symbol: string;
+    mint: string;
+    decimals: number;
+    tokenProgram: string;
+  }>;
+} {
+  const deployment: unknown = JSON.parse(
+    readFileSync(new URL("../runtime/local.json", import.meta.url), "utf8"),
+  );
+  if (!deployment || typeof deployment !== "object")
+    throw new Error("Local deployment manifest must be an object");
+  const { rpcHttpUrl, assets } = deployment as {
+    rpcHttpUrl?: unknown;
+    assets?: unknown;
+  };
+  if (rpcHttpUrl !== LOCAL_RPC_URL)
+    throw new Error(`Local RPC must be ${LOCAL_RPC_URL}`);
+  if (!Array.isArray(assets))
+    throw new Error("Local deployment assets must be an array");
+  const parsedAssets = assets.map((candidate) => {
+    if (!candidate || typeof candidate !== "object")
+      throw new Error("Invalid local deployment asset");
+    const {
+      symbol,
+      mint,
+      decimals: rawDecimals,
+      tokenProgram,
+    } = candidate as {
+      symbol?: unknown;
+      mint?: unknown;
+      decimals?: unknown;
+      tokenProgram?: unknown;
+    };
+    const decimals = typeof rawDecimals === "number" ? rawDecimals : NaN;
+    if (
+      typeof symbol !== "string" ||
+      typeof mint !== "string" ||
+      typeof tokenProgram !== "string" ||
+      !Number.isInteger(decimals) ||
+      decimals < 0 ||
+      decimals > 13
+    ) {
+      throw new Error("Invalid local deployment asset");
+    }
+    return { symbol, mint, decimals, tokenProgram };
+  });
+  return { rpcHttpUrl: LOCAL_RPC_URL, assets: parsedAssets };
+}
+
+async function waitForAirdrop(
+  rpcCall: <T>(method: string, params: unknown[]) => Promise<T>,
+  recipient: string,
+): Promise<string> {
+  const signature = await rpcCall<string>("requestAirdrop", [
+    recipient,
+    1_000_000_000,
+  ]);
+  const deadline = Date.now() + AIRDROP_TIMEOUT_MS;
+  for (;;) {
+    let statuses: {
+      value: Array<{
+        err?: unknown;
+        confirmationStatus?: string | null;
+      } | null>;
+    };
+    try {
+      statuses = await rpcCall("getSignatureStatuses", [[signature]]);
+    } catch {
+      throw new AirdropTimeoutError(signature);
+    }
+    const status = statuses.value[0];
+    if (status?.err) {
+      throw new Error(`Airdrop failed: ${JSON.stringify(status.err)}`);
+    }
+    if (
+      status?.confirmationStatus === "confirmed" ||
+      status?.confirmationStatus === "finalized"
+    ) {
+      return signature;
+    }
+    if (Date.now() >= deadline) throw new AirdropTimeoutError(signature);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
 async function fund(request: IncomingMessage, response: ServerResponse) {
   const host = request.headers.host;
   const origin = request.headers.origin;
@@ -37,7 +135,16 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
       return;
     }
   }
-  const input: { address: string; symbol: string } = JSON.parse(body);
+  let input: { address: string; symbol: string };
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw new Error("Request body must be an object");
+    input = parsed as { address: string; symbol: string };
+  } catch {
+    reply(response, 400, { error: "Malformed JSON body" });
+    return;
+  }
   if (
     typeof input.address !== "string" ||
     !isAddress(input.address) ||
@@ -46,12 +153,16 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
     reply(response, 400, { error: "Invalid wallet address" });
     return;
   }
-  const deployment: {
-    rpcHttpUrl: string;
-    assets: Array<{ symbol: string; mint: string; tokenProgram: string }>;
-  } = JSON.parse(
-    readFileSync(new URL("../runtime/local.json", import.meta.url), "utf8"),
-  );
+  let deployment: ReturnType<typeof parseDeployment>;
+  try {
+    deployment = parseDeployment();
+  } catch (error) {
+    reply(response, 500, {
+      error:
+        error instanceof Error ? error.message : "Invalid local deployment",
+    });
+    return;
+  }
   const asset = deployment.assets.find(
     (candidate) => candidate.symbol === input.symbol,
   );
@@ -64,8 +175,14 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ jsonrpc: "2.0", id: Date.now(), method, params }),
+      signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
     });
-    const result = (await response.json()) as { result?: T; error?: unknown };
+    let result: { result?: T; error?: unknown };
+    try {
+      result = (await response.json()) as { result?: T; error?: unknown };
+    } catch {
+      throw new Error(`Local RPC ${method} returned malformed JSON`);
+    }
     if (!response.ok || result.error) {
       throw new Error(
         `Local RPC ${method} failed: ${JSON.stringify(result.error ?? response.status)}`,
@@ -78,7 +195,18 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
     { commitment: "confirmed" },
   ]);
   if (lamports.value < 200_000_000) {
-    await rpcCall<string>("requestAirdrop", [input.address, 1_000_000_000]);
+    try {
+      await waitForAirdrop(rpcCall, input.address);
+    } catch (error) {
+      if (error instanceof AirdropTimeoutError) {
+        reply(response, 504, {
+          error: error.message,
+          signature: error.signature,
+        });
+        return;
+      }
+      throw error;
+    }
   }
   const owner = address(input.address);
   const mint = address(asset.mint);
@@ -99,7 +227,8 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
             )
           ).value.amount,
         );
-  if (currentAmount >= 100_000_000n) {
+  const targetAmount = 100n * 10n ** BigInt(asset.decimals);
+  if (currentAmount >= targetAmount) {
     reply(response, 200, {
       funded: input.address,
       symbol: asset.symbol,
@@ -107,25 +236,21 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
     });
     return;
   }
-  const rpc = await fetch(deployment.rpcHttpUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: Date.now(),
-      method: "surfnet_setTokenAccount",
-      params: [
-        input.address,
-        asset.mint,
-        { amount: 100_000_000 },
-        asset.tokenProgram,
-      ],
-    }),
-  });
-  const result = (await rpc.json()) as { error?: unknown };
-  if (!rpc.ok || result.error) {
+  const targetAmountNumber = Number(targetAmount);
+  if (!Number.isSafeInteger(targetAmountNumber)) {
+    reply(response, 500, { error: "Asset funding amount exceeds safe range" });
+    return;
+  }
+  try {
+    await rpcCall("surfnet_setTokenAccount", [
+      input.address,
+      asset.mint,
+      { amount: targetAmountNumber },
+      asset.tokenProgram,
+    ]);
+  } catch (error) {
     reply(response, 502, {
-      error: `Local funding failed: ${JSON.stringify(result.error ?? rpc.status)}`,
+      error: `Local funding failed: ${error instanceof Error ? error.message : String(error)}`,
     });
     return;
   }

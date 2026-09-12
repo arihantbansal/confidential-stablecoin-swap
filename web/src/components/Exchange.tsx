@@ -1,32 +1,17 @@
-import { isAddress } from "@solana/kit";
-import {
-  ArrowLeftRight,
-  ArrowRight,
-  Check,
-  ChevronDown,
-  Loader2,
-} from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { useId, useRef, useState } from "react";
+import { AmountField } from "@/components/AmountField";
+import { AssetPicker } from "@/components/AssetPicker";
+import { ExchangeMode } from "@/components/ExchangeMode";
+import { ExchangeReview } from "@/components/ExchangeReview";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  formatBaseUnits,
-  getAmountError,
-  parseDecimalToBaseUnits,
-} from "@/lib/amounts";
+import { formatBaseUnits } from "@/lib/amounts";
 import type { BalanceView } from "@/lib/engine";
+import { getExchangeState } from "@/lib/exchange";
 import type { LocalAsset } from "@/lib/manifest";
-import { getTokenIcon } from "@/lib/token-icons";
 
 export type ExchangeAction = "convert" | "send" | "withdraw";
 
@@ -34,6 +19,8 @@ export interface ExchangeStatus {
   state: "working" | "done";
   message: string;
 }
+
+export type BalanceState = "loading" | "ready" | "locked" | "error";
 
 interface ExchangeProps {
   connected: boolean;
@@ -43,56 +30,34 @@ interface ExchangeProps {
   status: ExchangeStatus | null;
   onConnect: () => void;
   onActionChange: () => void;
-  onApplyPending: () => void;
-  onSubmit: (action: ExchangeAction, amount: bigint, recipient: string) => void;
+  onSubmit: (
+    action: ExchangeAction,
+    amount: bigint,
+    recipient: string,
+  ) => Promise<boolean>;
   asset: LocalAsset | null;
   assets: readonly LocalAsset[];
   onAssetChange: (asset: LocalAsset) => void;
+  balanceState?: BalanceState;
 }
 
 type Mode = "convert" | "send";
 
-const MODES: Mode[] = ["convert", "send"];
-
-const MODE_LABEL: Record<Mode, string> = {
-  convert: "Convert",
-  send: "Send",
-};
-
-function isRecipient(value: string): boolean {
-  return value.trim() !== "" && isAddress(value.trim());
+function unknownBalanceLabel(balanceState?: BalanceState): string {
+  if (balanceState === "loading") return "Loading…";
+  if (balanceState === "locked") return "Locked";
+  if (balanceState === "error") return "Unavailable";
+  return "—";
 }
 
-function formatBalance(value: bigint | null): string {
-  return value === null ? "—" : formatBaseUnits(value);
-}
-
-function TokenMark({
-  asset,
-  large = false,
-}: {
-  asset: LocalAsset;
-  large?: boolean;
-}) {
-  const [failed, setFailed] = useState(false);
-  const token = getTokenIcon(asset.mint);
-  const size = large ? "size-9" : "size-5";
-
-  return failed || !token ? (
-    <span
-      aria-hidden="true"
-      className={`${size} inline-flex shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground`}
-    >
-      {asset.symbol.slice(0, 1)}
-    </span>
-  ) : (
-    <img
-      src={token.imageUrl}
-      alt=""
-      className={`${size} shrink-0 rounded-full object-cover outline-1 outline-black/10`}
-      onError={() => setFailed(true)}
-    />
-  );
+function formatBalance(
+  value: bigint | null,
+  decimals: number,
+  balanceState?: BalanceState,
+): string {
+  return value === null
+    ? unknownBalanceLabel(balanceState)
+    : formatBaseUnits(value, decimals);
 }
 
 export function Exchange({
@@ -103,11 +68,11 @@ export function Exchange({
   status,
   onConnect,
   onActionChange,
-  onApplyPending,
   onSubmit,
   asset,
   assets,
   onAssetChange,
+  balanceState,
 }: ExchangeProps) {
   const [mode, setMode] = useState<Mode>("convert");
   const [reversed, setReversed] = useState(false);
@@ -122,62 +87,49 @@ export function Exchange({
   const amountErrorId = useId();
   const recipientId = useId();
   const recipientErrorId = useId();
+  const statusId = useId();
   const amountRef = useRef<HTMLInputElement>(null);
   const recipientRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    if (status?.state === "done") {
-      setAmount("");
-      setAmountTouched(false);
-      setRecipientTouched(false);
-    }
-  }, [status]);
+  const decimals = asset?.decimals ?? 6;
 
-  const internalAction: ExchangeAction =
-    mode === "send" ? "send" : reversed ? "withdraw" : "convert";
-  const displayLabel =
-    mode === "send" ? "Send" : reversed ? "Make public" : "Make confidential";
-
-  const parsed = parseDecimalToBaseUnits(amount);
-  const amountErrorRaw = getAmountError(amount);
-  const emptyOrZero = amount.trim() === "" || parsed === 0n;
+  const {
+    internalAction,
+    displayLabel,
+    parsed,
+    amountError: amountErrorRaw,
+    emptyOrZero,
+    sourceBalance,
+    sourceKind,
+    targetKind,
+    insufficient,
+    recipientBad,
+    canReview,
+    ctaLabel,
+  } = getExchangeState({
+    mode,
+    reversed,
+    amount,
+    recipient,
+    decimals,
+    balances,
+    unwrapped,
+  });
   const amountError = amountTouched && !emptyOrZero ? amountErrorRaw : null;
-
-  const sourceBalance =
-    mode === "send"
-      ? balances.confidential
-      : reversed
-        ? balances.confidential
-        : unwrapped;
-  const sourceKind =
-    mode === "send" ? "Confidential" : reversed ? "Confidential" : "Public";
-  const targetKind = reversed ? "Public" : "Confidential";
-
-  const insufficient =
-    !emptyOrZero &&
-    parsed !== null &&
-    parsed > 0n &&
-    sourceBalance !== null &&
-    parsed > sourceBalance;
-
-  const recipientBad = mode === "send" && !isRecipient(recipient);
   const recipientError =
     recipientTouched && recipientBad
       ? "Enter a valid recipient address."
       : null;
-  const canReview =
-    parsed !== null &&
-    parsed > 0n &&
-    amountErrorRaw === null &&
-    !insufficient &&
-    (mode !== "send" || isRecipient(recipient));
 
-  const showApplyPending =
-    connected && balances.pending !== null && balances.pending > 0n && !busy;
+  function clearForm() {
+    setAmount("");
+    setAmountTouched(false);
+    setRecipientTouched(false);
+  }
 
   function applyMax() {
     if (sourceBalance !== null && sourceBalance > 0n) {
-      setAmount(formatBaseUnits(sourceBalance));
+      setAmount(formatBaseUnits(sourceBalance, decimals));
       setAmountTouched(false);
     }
   }
@@ -209,12 +161,25 @@ export function Exchange({
     openReview();
   }
 
-  function confirm() {
-    if (parsed === null || parsed <= 0n) {
+  async function confirm() {
+    if (busy || !canReview || parsed === null) {
       return;
     }
     setReviewOpen(false);
-    onSubmit(internalAction, parsed, recipient.trim());
+    const ok = await onSubmit(internalAction, parsed, recipient.trim());
+    if (ok) {
+      clearForm();
+    }
+  }
+
+  async function finishConversion() {
+    if (balances.public === null || balances.public <= 0n) {
+      return;
+    }
+    const ok = await onSubmit("withdraw", balances.public, "");
+    if (ok) {
+      clearForm();
+    }
   }
 
   function switchMode(next: Mode) {
@@ -227,327 +192,181 @@ export function Exchange({
     onActionChange();
   }
 
-  const activeIndex = MODES.indexOf(mode);
-  const ctaDisabled = busy || emptyOrZero || insufficient;
-  const ctaLabel = emptyOrZero
-    ? "Enter an amount"
-    : insufficient
-      ? "Insufficient balance"
-      : displayLabel;
+  function handleAssetSelect(candidate: LocalAsset) {
+    onAssetChange(candidate);
+    setAssetPickerOpen(false);
+    setAmountTouched(false);
+    onActionChange();
+  }
+
+  const ctaDisabled =
+    busy || emptyOrZero || insufficient || sourceBalance === null;
   const symbol = asset?.symbol ?? "—";
 
   return (
-    <section
-      aria-label="Exchange"
-      className="w-full rounded-xl border bg-card p-4 text-card-foreground shadow-sm"
-    >
-      <fieldset
-        aria-label="Action"
-        disabled={busy}
-        className="relative m-0 grid min-w-0 grid-cols-2 rounded-lg border-0 bg-muted p-1"
-      >
-        <span
-          aria-hidden="true"
-          className="seg-thumb absolute inset-y-1 left-1 w-[calc((100%-0.5rem)/2)] rounded-md bg-card shadow-xs"
-          style={{ transform: `translateX(${activeIndex * 100}%)` }}
-        />
-        {MODES.map((value) => (
-          <button
-            key={value}
-            type="button"
-            aria-pressed={mode === value}
-            disabled={busy}
-            onClick={() => switchMode(value)}
-            className="relative z-10 min-h-11 rounded-md text-sm font-medium text-muted-foreground transition-colors duration-150 aria-pressed:text-foreground focus-visible:outline-2 focus-visible:outline-ring disabled:opacity-50"
-          >
-            {MODE_LABEL[value]}
-          </button>
-        ))}
-      </fieldset>
-
-      <form onSubmit={handleSubmit}>
-        <div className="mt-4 space-y-2">
-          {mode === "convert" ? (
-            <fieldset
-              className="flex min-h-11 items-center gap-3 px-1 text-sm"
-              aria-label={`Convert from ${sourceKind} to ${targetKind}`}
-            >
-              <span className="direction-label" key={`from-${sourceKind}`}>
-                {sourceKind}
-              </span>
-              <ArrowRight
-                className="size-4 text-muted-foreground"
-                aria-hidden="true"
-              />
-              <span className="direction-label" key={`to-${targetKind}`}>
-                {targetKind}
-              </span>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                disabled={busy}
-                onClick={() => {
-                  setReversed((value) => !value);
-                  setAmountTouched(false);
-                  onActionChange();
-                }}
-                aria-label="Reverse conversion direction"
-                className="press ml-auto size-11"
-              >
-                <ArrowLeftRight aria-hidden="true" />
-              </Button>
-            </fieldset>
-          ) : null}
-          <div className="rounded-lg bg-muted/60 p-4">
-            <Label htmlFor={amountId} className="sr-only">
-              Amount
-            </Label>
-            <div className="mt-1 flex items-center gap-2">
-              <Input
-                ref={amountRef}
-                id={amountId}
-                inputMode="decimal"
-                autoComplete="off"
-                placeholder="0"
-                value={amount}
-                disabled={busy}
-                onChange={(event) => {
-                  setAmount(event.target.value);
-                  setAmountTouched(false);
-                }}
-                onBlur={() => setAmountTouched(true)}
-                aria-invalid={amountError ? true : undefined}
-                aria-describedby={amountError ? amountErrorId : undefined}
-                className="min-h-14 rounded-md border-0 bg-transparent px-0 text-4xl md:text-4xl font-semibold tabular-nums shadow-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
-              />
-              <Dialog open={assetPickerOpen} onOpenChange={setAssetPickerOpen}>
-                <DialogTrigger
-                  type="button"
-                  disabled={busy || assets.length === 0}
-                  aria-label={`Select asset, currently ${symbol}`}
-                  className="press inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
-                >
-                  {asset ? <TokenMark asset={asset} /> : null}
-                  {symbol}
-                  <ChevronDown
-                    className="size-4 text-muted-foreground"
-                    aria-hidden="true"
+    <section aria-label="Exchange" tabIndex={-1} className="w-full rounded-xl">
+      <Card className="gap-0 py-0">
+        <CardContent className="p-4">
+          <ExchangeMode
+            mode={mode}
+            busy={busy}
+            sourceKind={sourceKind}
+            targetKind={targetKind}
+            onModeChange={switchMode}
+            onReverse={() => {
+              setReversed((value) => !value);
+              setAmountTouched(false);
+              onActionChange();
+            }}
+          />
+          <form onSubmit={handleSubmit}>
+            <div className="mt-4 space-y-2">
+              <AmountField
+                amountId={amountId}
+                amountErrorId={amountErrorId}
+                amount={amount}
+                amountError={amountError}
+                busy={busy}
+                sourceKind={sourceKind}
+                sourceBalanceText={formatBalance(
+                  sourceBalance,
+                  decimals,
+                  connected ? balanceState : undefined,
+                )}
+                maxDisabled={
+                  busy || sourceBalance === null || sourceBalance <= 0n
+                }
+                inputRef={amountRef}
+                assetControl={
+                  <AssetPicker
+                    asset={asset}
+                    assets={assets}
+                    open={assetPickerOpen}
+                    busy={busy}
+                    onOpenChange={setAssetPickerOpen}
+                    onSelect={handleAssetSelect}
                   />
-                </DialogTrigger>
-                <DialogContent className="max-w-sm gap-3 p-4 sm:max-w-sm">
-                  <DialogHeader className="gap-1 pr-8">
-                    <DialogTitle>Choose an asset</DialogTitle>
-                    <DialogDescription className="sr-only">
-                      Select the token to use for this exchange.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid gap-1">
-                    {assets.map((candidate) => {
-                      const selected = candidate.symbol === asset?.symbol;
-                      return (
-                        <button
-                          key={candidate.symbol}
-                          type="button"
-                          aria-pressed={selected}
-                          className="flex min-h-11 items-center justify-between rounded-lg px-3 text-left text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-muted"
-                          onClick={() => {
-                            onAssetChange(candidate);
-                            setAssetPickerOpen(false);
-                            setAmountTouched(false);
-                            onActionChange();
-                          }}
-                        >
-                          <span className="flex items-center gap-3">
-                            <TokenMark asset={candidate} large />
-                            <span>
-                              <span className="block">{candidate.symbol}</span>
-                              {getTokenIcon(candidate.mint)?.name &&
-                              getTokenIcon(candidate.mint)?.name !==
-                                candidate.symbol ? (
-                                <span className="block text-xs font-normal text-muted-foreground">
-                                  {getTokenIcon(candidate.mint)?.name}
-                                </span>
-                              ) : null}
-                            </span>
-                          </span>
-                          {selected ? (
-                            <Check
-                              className="size-4 text-foreground"
-                              aria-hidden="true"
-                            />
-                          ) : null}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <div className="flex min-h-11 items-center justify-between gap-3 text-xs text-muted-foreground">
-              <span>
-                {sourceKind} balance: {formatBalance(sourceBalance)}
-              </span>
-              <button
-                type="button"
-                onClick={applyMax}
-                disabled={busy || sourceBalance === null || sourceBalance <= 0n}
-                className="min-h-11 min-w-11 rounded-md px-2 font-medium text-foreground hover:bg-accent disabled:opacity-40"
-              >
-                Max
-              </button>
-            </div>
-            {amountError ? (
-              <p
-                id={amountErrorId}
-                role="alert"
-                className="text-xs text-destructive"
-              >
-                {amountError}
-              </p>
-            ) : null}
-          </div>
-
-          {mode === "send" ? (
-            <div className="space-y-2">
-              <Label
-                htmlFor={recipientId}
-                className="text-sm text-muted-foreground"
-              >
-                To
-              </Label>
-              <Input
-                ref={recipientRef}
-                id={recipientId}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Recipient address"
-                value={recipient}
-                disabled={busy}
-                onChange={(event) => {
-                  setRecipient(event.target.value);
-                  setRecipientTouched(false);
+                }
+                onAmountChange={(value) => {
+                  setAmount(value);
+                  setAmountTouched(false);
                 }}
-                onBlur={(event) => {
-                  if (event.target.value.trim() !== "") {
-                    setRecipientTouched(true);
-                  }
-                }}
-                aria-invalid={recipientError ? true : undefined}
-                aria-describedby={recipientError ? recipientErrorId : undefined}
-                className="min-h-11 font-mono text-xs"
+                onAmountBlur={() => setAmountTouched(true)}
+                onApplyMax={applyMax}
               />
-              {recipientError ? (
-                <p
-                  id={recipientErrorId}
-                  role="alert"
-                  className="text-xs text-destructive"
-                >
-                  {recipientError}
-                </p>
+
+              {mode === "send" ? (
+                <div className="space-y-2">
+                  <Label
+                    htmlFor={recipientId}
+                    className="text-sm text-muted-foreground"
+                  >
+                    To
+                  </Label>
+                  <Input
+                    ref={recipientRef}
+                    id={recipientId}
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder="Recipient address"
+                    value={recipient}
+                    disabled={busy}
+                    onChange={(event) => {
+                      setRecipient(event.target.value);
+                      setRecipientTouched(false);
+                    }}
+                    onBlur={(event) => {
+                      if (event.target.value.trim() !== "") {
+                        setRecipientTouched(true);
+                      }
+                    }}
+                    aria-invalid={recipientError ? true : undefined}
+                    aria-describedby={
+                      recipientError ? recipientErrorId : undefined
+                    }
+                    className="min-h-11 font-mono text-base md:text-sm"
+                  />
+                  {recipientError ? (
+                    <p
+                      id={recipientErrorId}
+                      role="alert"
+                      className="text-xs text-destructive"
+                    >
+                      {recipientError}
+                    </p>
+                  ) : null}
+                </div>
               ) : null}
             </div>
-          ) : null}
-        </div>
 
-        <div className="mt-4">
-          {!connected ? (
-            <Button
-              type="button"
-              onClick={onConnect}
-              className="press min-h-11 w-full"
-            >
-              Connect wallet
-            </Button>
-          ) : (
-            <Button
-              type="submit"
-              disabled={ctaDisabled}
-              className="press min-h-11 w-full"
-            >
-              {busy && status?.state === "working" ? (
-                <span className="inline-flex items-center gap-2">
-                  <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-                  {status.message}
-                </span>
+            <div className="mt-4">
+              {!connected ? (
+                <Button
+                  type="button"
+                  onClick={onConnect}
+                  className="press min-h-11 w-full"
+                >
+                  Connect wallet
+                </Button>
               ) : (
-                ctaLabel
+                <Button
+                  type="submit"
+                  disabled={ctaDisabled}
+                  className="press min-h-11 w-full"
+                  aria-describedby={statusId}
+                >
+                  {busy && status?.state === "working" ? (
+                    <span className="inline-flex items-center gap-2">
+                      <Loader2
+                        className="size-4 animate-spin"
+                        aria-hidden="true"
+                      />
+                      {status.message}
+                    </span>
+                  ) : (
+                    ctaLabel
+                  )}
+                </Button>
               )}
-            </Button>
-          )}
-        </div>
-      </form>
-
-      {showApplyPending ? (
-        <div className="mt-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={onApplyPending}
-            className="press min-h-11 w-full"
-          >
-            Accept {formatBaseUnits(balances.pending ?? 0n)} {symbol}
-          </Button>
-        </div>
-      ) : null}
-
-      {connected && balances.public !== null && balances.public > 0n ? (
-        <div className="mt-4 space-y-2">
-          <p className="text-sm text-muted-foreground">
-            {formatBaseUnits(balances.public)} {symbol} is ready to return to
-            your public balance.
+            </div>
+          </form>
+          <p id={statusId} role="status" className="sr-only">
+            {status?.message ?? ""}
           </p>
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy}
-            className="press min-h-11 w-full"
-            onClick={() => onSubmit("withdraw", balances.public ?? 0n, "")}
-          >
-            Finish conversion
-          </Button>
-        </div>
-      ) : null}
 
-      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {mode === "send" ? "Send" : "Make"}{" "}
-              {parsed !== null && parsed > 0n ? formatBaseUnits(parsed) : ""}{" "}
-              {symbol}
-              {mode === "convert"
-                ? ` ${reversed ? "public" : "confidential"}`
-                : ""}
-            </DialogTitle>
-            <DialogDescription>
-              {mode === "send"
-                ? `To ${recipient.trim()}`
-                : internalAction === "withdraw"
-                  ? "Confidential to public. The amount will be visible."
-                  : "Public to confidential. The deposit amount remains visible."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setReviewOpen(false)}
-              className="press min-h-11"
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              onClick={confirm}
-              disabled={busy}
-              className="press min-h-11"
-            >
-              {displayLabel}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          {connected && balances.public !== null && balances.public > 0n ? (
+            <div className="mt-4 space-y-2">
+              <p className="text-sm text-muted-foreground">
+                {formatBaseUnits(balances.public, decimals)} {symbol} is ready
+                to return to your public balance.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                className="press min-h-11 w-full"
+                onClick={() => void finishConversion()}
+              >
+                Finish conversion
+              </Button>
+            </div>
+          ) : null}
+
+          <ExchangeReview
+            open={reviewOpen}
+            busy={busy || !canReview}
+            mode={mode}
+            parsed={parsed}
+            decimals={decimals}
+            symbol={symbol}
+            recipient={recipient}
+            internalAction={internalAction}
+            confirmLabel={displayLabel}
+            onOpenChange={setReviewOpen}
+            onConfirm={() => void confirm()}
+          />
+        </CardContent>
+      </Card>
     </section>
   );
 }

@@ -1,8 +1,14 @@
 import {
+  findWrappedMintAuthorityPda,
+  getUnwrapInstruction,
+  getWrapInstruction,
+} from "@confidential-stablecoin/runtime/wrap";
+import {
   type Address,
   address,
   fetchEncodedAccount,
   getBase58Encoder,
+  type Instruction,
   isAddress,
 } from "@solana/kit";
 import {
@@ -31,16 +37,14 @@ import {
 } from "@solana-program/token-2022/confidential";
 import {
   deriveKeys,
+  disposeKeys,
+  releaseSessionKeys,
+  retainSessionKeys,
   type Session,
   type SessionKeys,
   sendPlan,
   sendSingle,
 } from "@/lib/session";
-import {
-  findWrappedMintAuthorityPda,
-  getUnwrapInstruction,
-  getWrapInstruction,
-} from "@/lib/wrap";
 
 export type TxStage =
   | "idle"
@@ -54,6 +58,7 @@ export interface BalanceView {
   public: bigint | null;
   pending: bigint | null;
   confidential: bigint | null;
+  hasPending?: boolean;
 }
 
 export type Progress = (
@@ -73,6 +78,7 @@ interface ConfidentialExtension {
   approved: boolean;
   elgamalPubkey: Address;
   allowConfidentialCredits: boolean;
+  pendingBalanceCreditCounter: bigint;
 }
 
 function confidentialExtension(
@@ -134,33 +140,64 @@ function createUnderlyingAta(session: Session, ata: Address) {
 }
 
 export async function unlockSession(session: Session): Promise<SessionKeys> {
+  if (session.keys && !session.disposed) {
+    return session.keys;
+  }
+  if (session.disposed) {
+    throw new Error("Wallet session is disconnected");
+  }
+  if (session.unlockingKeys) {
+    return session.unlockingKeys;
+  }
   const { wrappedMint } = addresses(session);
-  const keys = await deriveKeys(session.signer, session.owner, wrappedMint);
-  const [ata] = await findAssociatedTokenPda({
-    owner: session.owner,
-    mint: wrappedMint,
-    tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
-  });
-  const account = await fetchMaybeToken(session.client.rpc, ata);
-  if (account.exists) {
-    const extension = confidentialExtension(account.data);
-    if (extension) {
-      const expected = new Uint8Array(keys.elgamalKeypair.pubkey().toBytes());
-      const actual = getBase58Encoder().encode(extension.elgamalPubkey);
-      if (
-        expected.length !== actual.length ||
-        !expected.every((byte, index) => byte === actual[index])
-      ) {
-        throw new Error("Wallet keys do not match this confidential account.");
+  const unlocking = (async () => {
+    const keys = await deriveKeys(session.signer, session.owner, wrappedMint);
+    try {
+      const [ata] = await findAssociatedTokenPda({
+        owner: session.owner,
+        mint: wrappedMint,
+        tokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
+      });
+      const account = await fetchMaybeToken(session.client.rpc, ata);
+      if (account.exists) {
+        const extension = confidentialExtension(account.data);
+        if (extension) {
+          const pubkey = keys.elgamalKeypair.pubkey();
+          const expected = new Uint8Array(pubkey.toBytes());
+          pubkey.free();
+          const actual = getBase58Encoder().encode(extension.elgamalPubkey);
+          if (
+            expected.length !== actual.length ||
+            !expected.every((byte, index) => byte === actual[index])
+          ) {
+            throw new Error(
+              "Wallet keys do not match this confidential account.",
+            );
+          }
+        }
       }
+      if (session.disposed) {
+        throw new Error("Wallet session is disconnected");
+      }
+      session.keys = keys;
+      return keys;
+    } catch (error) {
+      disposeKeys(keys);
+      throw error;
+    }
+  })();
+  session.unlockingKeys = unlocking;
+  try {
+    return await unlocking;
+  } finally {
+    if (session.unlockingKeys === unlocking) {
+      session.unlockingKeys = null;
     }
   }
-  session.keys = keys;
-  return keys;
 }
 
 function requireKeys(session: Session): SessionKeys {
-  if (!session.keys) {
+  if (!session.keys || session.disposed) {
     throw new Error("Confidential keys are locked");
   }
   return session.keys;
@@ -175,28 +212,35 @@ export async function readBalances(session: Session): Promise<BalanceView> {
   });
   const account = await fetchMaybeToken(session.client.rpc, ata);
   if (!account.exists) {
-    return { public: null, pending: null, confidential: null };
+    return { public: 0n, pending: 0n, confidential: 0n };
   }
   const view: BalanceView = {
     public: account.data.amount,
     pending: null,
     confidential: null,
   };
-  if (!session.keys) {
-    return view;
-  }
   const extension = confidentialExtension(account.data);
-  if (!extension) {
+  view.hasPending = (extension?.pendingBalanceCreditCounter ?? 0n) > 0n;
+  const keys = retainSessionKeys(session);
+  if (!keys) {
     return view;
   }
-  const decrypted = decryptConfidentialTransferBalance({
-    tokenAccount: account.data,
-    elgamalSecretKey: session.keys.elgamalSecretKey,
-    aesKey: session.keys.aesKey,
-  });
-  view.pending = decrypted.pendingBalance;
-  view.confidential = decrypted.availableBalance;
-  return view;
+  try {
+    const extension = confidentialExtension(account.data);
+    if (!extension) {
+      return { ...view, pending: 0n, confidential: 0n };
+    }
+    const decrypted = decryptConfidentialTransferBalance({
+      tokenAccount: account.data,
+      elgamalSecretKey: keys.elgamalSecretKey,
+      aesKey: keys.aesKey,
+    });
+    view.pending = decrypted.pendingBalance;
+    view.confidential = decrypted.availableBalance;
+    return view;
+  } finally {
+    releaseSessionKeys(session);
+  }
 }
 
 export async function readUnwrappedBalance(
@@ -205,7 +249,7 @@ export async function readUnwrappedBalance(
   const [ata] = await findUnderlyingAta(session);
   const account = await fetchEncodedAccount(session.client.rpc, ata);
   if (!account.exists) {
-    return null;
+    return 0n;
   }
   return session.selectedAsset.tokenProgram === TOKEN_2022_PROGRAM_ADDRESS
     ? getToken2022Decoder().decode(account.data).amount
@@ -238,7 +282,7 @@ export async function ensureConfidentialAccount(
     aesKey: keys.aesKey,
   });
   onProgress("awaiting-approval", "Approve the account transaction");
-  const signatures = await sendPlan(session, plan);
+  const signatures = await sendSteps(session, plan, onProgress);
   onProgress("confirmed", "Account ready", signatures.at(-1));
   return { address: ata, created: true };
 }
@@ -250,7 +294,7 @@ async function applyPending(
   onProgress: Progress,
 ): Promise<string> {
   const keys = requireKeys(session);
-  const signature = await sendSingle(session, [
+  const signature = await sendStep(session, onProgress, [
     getApplyConfidentialPendingBalanceInstructionFromToken({
       token,
       tokenAccount: account,
@@ -267,28 +311,23 @@ export async function applyPendingBalance(
   session: Session,
   onProgress: Progress,
 ): Promise<string | null> {
-  const keys = requireKeys(session);
-  const { address: token } = await ensureConfidentialAccount(
-    session,
-    onProgress,
-  );
-  const live = await fetchConfidentialTransferBalance({
-    token,
-    rpc: session.client.rpc,
-    elgamalSecretKey: keys.elgamalSecretKey,
-    aesKey: keys.aesKey,
+  return withSessionOperation(session, onProgress, async (report) => {
+    const keys = requireKeys(session);
+    const { address: token } = await ensureConfidentialAccount(session, report);
+    const account = await fetchMaybeToken(session.client.rpc, token);
+    if (!account.exists)
+      throw new Error("Token account missing before applying pending");
+    const live = decryptConfidentialTransferBalance({
+      tokenAccount: account.data,
+      elgamalSecretKey: keys.elgamalSecretKey,
+      aesKey: keys.aesKey,
+    });
+    if (live.pendingBalance === 0n) return null;
+    return applyPending(session, token, account.data, report);
   });
-  if (live.pendingBalance === 0n) {
-    return null;
-  }
-  const account = await fetchMaybeToken(session.client.rpc, token);
-  if (!account.exists) {
-    throw new Error("Token account missing before applying pending");
-  }
-  return applyPending(session, token, account.data, onProgress);
 }
 
-export async function convert(
+async function convertTokens(
   session: Session,
   amount: bigint,
   onProgress: Progress,
@@ -303,7 +342,7 @@ export async function convert(
   const [unwrappedAta] = await findUnderlyingAta(session);
   onProgress("awaiting-approval", "Approve the wrap transaction");
   signatures.push(
-    await sendSingle(session, [
+    await sendStep(session, onProgress, [
       createUnderlyingAta(session, unwrappedAta),
       getWrapInstruction(
         wrapperProgram,
@@ -376,7 +415,7 @@ export async function checkRecipient(
   return ata;
 }
 
-export async function send(
+async function sendTokens(
   session: Session,
   recipient: string,
   amount: bigint,
@@ -405,11 +444,10 @@ export async function send(
       );
     }
   }
-  const sourceAccount = await fetchMaybeToken(session.client.rpc, source);
-  const destinationAccount = await fetchMaybeToken(
-    session.client.rpc,
-    destination,
-  );
+  const [sourceAccount, destinationAccount] = await Promise.all([
+    fetchMaybeToken(session.client.rpc, source),
+    fetchMaybeToken(session.client.rpc, destination),
+  ]);
   if (!sourceAccount.exists || !destinationAccount.exists) {
     throw new Error("Token account missing before transfer");
   }
@@ -428,12 +466,12 @@ export async function send(
     aesKey: keys.aesKey,
   });
   onProgress("awaiting-approval", "Approve the transfer transactions");
-  signatures.push(...(await sendPlan(session, plan)));
+  signatures.push(...(await sendSteps(session, plan, onProgress)));
   onProgress("confirmed", "Transfer confirmed", signatures.at(-1));
   return signatures;
 }
 
-export async function withdraw(
+async function withdrawTokens(
   session: Session,
   amount: bigint,
   onProgress: Progress,
@@ -485,13 +523,13 @@ export async function withdraw(
         aesKey: keys.aesKey,
       });
       onProgress("awaiting-approval", "Approve the withdrawal transactions");
-      signatures.push(...(await sendPlan(session, plan)));
+      signatures.push(...(await sendSteps(session, plan, onProgress)));
     }
   }
   const [unwrappedAta] = await findUnderlyingAta(session);
   onProgress("awaiting-approval", "Approve the unwrap transaction");
   signatures.push(
-    await sendSingle(session, [
+    await sendStep(session, onProgress, [
       createUnderlyingAta(session, unwrappedAta),
       getUnwrapInstruction(
         wrapperProgram,
@@ -529,6 +567,7 @@ export async function requestFunds(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ address: target, symbol }),
+    signal: AbortSignal.timeout(45000),
   });
   if (response.status === 404) {
     throw new Error("Local funding needs the dev server");
@@ -536,7 +575,114 @@ export async function requestFunds(
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       error?: string;
+      signature?: string;
     } | null;
-    throw new Error(body?.error ?? "Local funding failed");
+    const error = new Error(body?.error ?? "Local funding failed");
+    if (body?.signature)
+      throw Object.assign(error, { unresolvedSignatures: [body.signature] });
+    throw error;
   }
+}
+
+async function sendStep(
+  session: Session,
+  onProgress: Progress,
+  instructions: readonly Instruction[],
+): Promise<string> {
+  if (session.disposed) throw new Error("Wallet session is disconnected");
+  const signature = await sendSingle(session, instructions);
+  onProgress("confirmed", "Transaction confirmed", signature);
+  return signature;
+}
+
+async function sendSteps(
+  session: Session,
+  plan: Parameters<typeof sendPlan>[1],
+  onProgress: Progress,
+): Promise<string[]> {
+  if (session.disposed) throw new Error("Wallet session is disconnected");
+  const signatures = await sendPlan(session, plan);
+  for (const signature of signatures)
+    onProgress("confirmed", "Transaction confirmed", signature);
+  return signatures;
+}
+
+class OperationFailure extends Error {
+  readonly confirmedSignatures: string[];
+  readonly unresolvedSignatures: string[];
+  readonly failedSignatures: string[];
+  constructor(cause: unknown, confirmed: Set<string>) {
+    super(cause instanceof Error ? cause.message : "Operation failed", {
+      cause,
+    });
+    const transactionError = cause as {
+      failure?: {
+        confirmedSignatures?: string[];
+        unresolvedSignatures?: string[];
+        failedSignatures?: string[];
+      };
+    };
+    const failure =
+      transactionError?.failure ??
+      (cause as {
+        confirmedSignatures?: string[];
+        unresolvedSignatures?: string[];
+        failedSignatures?: string[];
+      });
+    this.confirmedSignatures = Array.from(
+      new Set([...confirmed, ...(failure?.confirmedSignatures ?? [])]),
+    );
+    this.unresolvedSignatures = failure?.unresolvedSignatures ?? [];
+    this.failedSignatures = failure?.failedSignatures ?? [];
+  }
+}
+
+async function withSessionOperation<T>(
+  session: Session,
+  onProgress: Progress,
+  operation: (report: Progress) => Promise<T>,
+): Promise<T> {
+  await unlockSession(session);
+  if (!retainSessionKeys(session))
+    throw new Error("Wallet session is disconnected");
+  const confirmed = new Set<string>();
+  try {
+    return await operation((stage, message, signature) => {
+      if (signature) confirmed.add(signature);
+      onProgress(stage, message, signature);
+    });
+  } catch (error) {
+    throw new OperationFailure(error, confirmed);
+  } finally {
+    releaseSessionKeys(session);
+  }
+}
+
+export function convert(
+  session: Session,
+  amount: bigint,
+  onProgress: Progress,
+): Promise<string[]> {
+  return withSessionOperation(session, onProgress, (report) =>
+    convertTokens(session, amount, report),
+  );
+}
+export function send(
+  session: Session,
+  recipient: string,
+  amount: bigint,
+  onProgress: Progress,
+): Promise<string[]> {
+  return withSessionOperation(session, onProgress, (report) =>
+    sendTokens(session, recipient, amount, report),
+  );
+}
+export function withdraw(
+  session: Session,
+  amount: bigint,
+  onProgress: Progress,
+): Promise<{ signatures: string[]; unwrapped: bigint }> {
+  return withSessionOperation(session, onProgress, (report) =>
+    withdrawTokens(session, amount, report),
+  );
 }

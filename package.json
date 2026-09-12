@@ -15,7 +15,7 @@
     "format": "biome check --write .",
     "local:start": "bash scripts/start-local.sh",
     "local:build": "bash scripts/build-wrapper.sh",
-    "local:setup": "node scripts/load-local.mjs && pnpm --filter @confidential-stablecoin/runtime setup",
+    "local:setup": "node scripts/load-local.mjs && pnpm --filter @confidential-stablecoin/runtime run setup",
     "local:roundtrip": "pnpm --filter @confidential-stablecoin/runtime roundtrip"
   },
   "devDependencies": {

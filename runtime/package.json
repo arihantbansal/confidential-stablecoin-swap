@@ -27,6 +27,8 @@
   },
   "exports": {
     "./client": "./src/client.ts",
-    "./send": "./src/send.ts"
+    "./send": "./src/send.ts",
+    "./transactions": "./src/transactions.ts",
+    "./wrap": "./src/wrap.ts"
   }
 }

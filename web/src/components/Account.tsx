@@ -11,6 +11,8 @@ import {
 import { formatBaseUnits } from "@/lib/amounts";
 import type { Wallet } from "@/lib/wallets";
 
+export type BalanceState = "loading" | "ready" | "locked" | "error";
+
 interface WalletDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,7 +32,10 @@ export function WalletDialog({
 }: WalletDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(80dvh,30rem)] overflow-y-auto">
+      <DialogContent
+        returnFocus
+        className="max-h-[min(80dvh,30rem)] overflow-y-auto"
+      >
         <DialogHeader>
           <DialogTitle>Connect wallet</DialogTitle>
           <DialogDescription className="sr-only">
@@ -72,6 +77,10 @@ export function WalletDialog({
           >
             Use a test wallet
           </Button>
+          <p className="pt-2 text-xs text-muted-foreground">
+            Test wallet lives only on this page and disappears on reload or
+            disconnect.
+          </p>
         </div>
       </DialogContent>
     </Dialog>
@@ -88,6 +97,15 @@ interface AccountDialogProps {
   onFunds: () => void;
   onDisconnect: () => void;
   symbol: string;
+  decimals?: number;
+  balanceState?: BalanceState;
+}
+
+function unknownBalanceLabel(balanceState?: BalanceState): string {
+  if (balanceState === "loading") return "Loading…";
+  if (balanceState === "locked") return "Locked";
+  if (balanceState === "error") return "Unavailable";
+  return "—";
 }
 
 export function AccountDialog({
@@ -100,6 +118,8 @@ export function AccountDialog({
   onFunds,
   onDisconnect,
   symbol,
+  decimals = 6,
+  balanceState,
 }: AccountDialogProps) {
   async function copyAddress() {
     try {
@@ -108,13 +128,14 @@ export function AccountDialog({
     } catch {
       toast.error("Could not copy address.", {
         description: "Copy the address manually.",
+        duration: Infinity,
       });
     }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent returnFocus>
         <DialogHeader>
           <DialogTitle>Account</DialogTitle>
           <DialogDescription className="sr-only">
@@ -143,7 +164,9 @@ export function AccountDialog({
             <div className="flex justify-between gap-4">
               <dt className="text-muted-foreground">Public</dt>
               <dd className="tabular-nums">
-                {publicBalance === null ? "—" : formatBaseUnits(publicBalance)}{" "}
+                {publicBalance === null
+                  ? unknownBalanceLabel(balanceState)
+                  : formatBaseUnits(publicBalance, decimals)}{" "}
                 {symbol}
               </dd>
             </div>
@@ -151,8 +174,8 @@ export function AccountDialog({
               <dt className="text-muted-foreground">Confidential</dt>
               <dd className="tabular-nums">
                 {confidentialBalance === null
-                  ? "—"
-                  : formatBaseUnits(confidentialBalance)}{" "}
+                  ? unknownBalanceLabel(balanceState)
+                  : formatBaseUnits(confidentialBalance, decimals)}{" "}
                 {symbol}
               </dd>
             </div>

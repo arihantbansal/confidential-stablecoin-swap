@@ -35,4 +35,35 @@ describe("token amounts", () => {
     expect(formatBaseUnits(30_500_000n)).toBe("30.5");
     expect(formatBaseUnits(1n)).toBe("0.000001");
   });
+
+  it("supports zero-decimal assets without fractions", () => {
+    expect(parseDecimalToBaseUnits("1", 0)).toBe(1n);
+    expect(parseDecimalToBaseUnits("1.", 0)).toBe(1n);
+    expect(parseDecimalToBaseUnits("0.5", 0)).toBeNull();
+    expect(parseDecimalToBaseUnits(".5", 0)).toBeNull();
+    expect(getAmountError("0.5", 0)).toBe(
+      "At most 0 decimal places are supported.",
+    );
+    expect(formatBaseUnits(42n, 0)).toBe("42");
+    expect(formatBaseUnits(0n, 0)).toBe("0");
+  });
+
+  it("respects custom asset decimals", () => {
+    expect(parseDecimalToBaseUnits("1.5", 2)).toBe(150n);
+    expect(parseDecimalToBaseUnits("1.555", 2)).toBeNull();
+    expect(formatBaseUnits(150n, 2)).toBe("1.5");
+    expect(formatBaseUnits(1n, 2)).toBe("0.01");
+    expect(getAmountError("1.555", 2)).toBe(
+      "At most 2 decimal places are supported.",
+    );
+  });
+
+  it("round-trips small and zero-padded values", () => {
+    expect(parseDecimalToBaseUnits("00.50")).toBe(500_000n);
+    expect(formatBaseUnits(500_000n)).toBe("0.5");
+    expect(parseDecimalToBaseUnits("0.000000")).toBe(0n);
+    expect(getAmountError("0.000000")).toBe(
+      "Amount must be greater than zero.",
+    );
+  });
 });
