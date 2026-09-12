@@ -5,7 +5,6 @@ export interface LocalManifest {
   rpcWsUrl: string;
   wrapperProgram: Address;
   assets: LocalAsset[];
-  users: Record<string, Address>;
 }
 
 export interface LocalAsset {
@@ -17,7 +16,6 @@ export interface LocalAsset {
     mint: Address;
     escrow: Address;
     mintAuthority: Address;
-    backpointer: Address;
   };
 }
 
@@ -46,7 +44,6 @@ export async function loadManifest(): Promise<LocalManifest> {
         mint: address(asset.wrapped.mint),
         escrow: address(asset.wrapped.escrow),
         mintAuthority: address(asset.wrapped.mintAuthority),
-        backpointer: address(asset.wrapped.backpointer),
       },
     };
   });
@@ -54,11 +51,5 @@ export async function loadManifest(): Promise<LocalManifest> {
     ...manifest,
     wrapperProgram: address(manifest.wrapperProgram),
     assets,
-    users: Object.fromEntries(
-      Object.entries(manifest.users ?? {}).map(([key, value]) => [
-        key,
-        address(value),
-      ]),
-    ),
   };
 }

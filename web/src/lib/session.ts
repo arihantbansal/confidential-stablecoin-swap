@@ -79,12 +79,6 @@ export function createSession(
   };
 }
 
-export function switchSessionAsset(session: Session, asset: LocalAsset): void {
-  if (session.selectedAsset.mint === asset.mint) return;
-  freeSessionKeys(session);
-  session.selectedAsset = asset;
-}
-
 export async function deriveKeys(
   signer: MessagePartialSigner,
   owner: Address,

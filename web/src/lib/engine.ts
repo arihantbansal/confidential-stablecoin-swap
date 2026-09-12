@@ -524,11 +524,7 @@ export async function withdraw(
 export async function requestFunds(
   target: string,
   symbol: string,
-): Promise<{
-  funded: string;
-  tokenAccount: string;
-  signatures: string[];
-}> {
+): Promise<void> {
   const response = await fetch("/api/local-fund", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -537,18 +533,10 @@ export async function requestFunds(
   if (response.status === 404) {
     throw new Error("Local funding needs the dev server");
   }
-  const body = (await response.json()) as {
-    funded?: string;
-    tokenAccount?: string;
-    signatures?: string[];
-    error?: string;
-  };
   if (!response.ok) {
-    throw new Error(body.error ?? "Test funding failed");
+    const body = (await response.json().catch(() => null)) as {
+      error?: string;
+    } | null;
+    throw new Error(body?.error ?? "Local funding failed");
   }
-  return {
-    funded: body.funded ?? target,
-    tokenAccount: body.tokenAccount ?? "",
-    signatures: body.signatures ?? [],
-  };
 }
