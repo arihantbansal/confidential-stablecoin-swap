@@ -41,7 +41,7 @@ Open http://127.0.0.1:5173. Surfpool serves RPC on port 8899 and WebSocket on 89
 
 1. Connect a Solana wallet or choose **Use a test wallet**.
 2. Choose an asset beside the amount field.
-3. Click your wallet address, then **Get USDC**, **Get USDT**, or **Get CASH** to top up that asset to 100. This also adds SOL when needed. Test wallets start funded for the selected asset.
+3. Click your wallet address, then **Top up USDC**, **Top up USDT**, or **Top up CASH** to top up that asset to 100. This also adds SOL when needed. Test wallets start funded for the selected asset.
 4. Use **Convert** to move between public and confidential balances. Flip the direction to convert back. Use **Send** to transfer confidential funds.
 
 Incoming funds appear above the form, grouped by asset. Choose **Add to balance** to make them spendable. Amounts appear after you unlock the asset's confidential keys.

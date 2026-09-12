@@ -194,9 +194,11 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
     input.address,
     { commitment: "confirmed" },
   ]);
+  let solAdded = false;
   if (lamports.value < 200_000_000) {
     try {
       await waitForAirdrop(rpcCall, input.address);
+      solAdded = true;
     } catch (error) {
       if (error instanceof AirdropTimeoutError) {
         reply(response, 504, {
@@ -230,9 +232,8 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
   const targetAmount = 100n * 10n ** BigInt(asset.decimals);
   if (currentAmount >= targetAmount) {
     reply(response, 200, {
-      funded: input.address,
-      symbol: asset.symbol,
-      signatures: [],
+      tokensAdded: false,
+      solAdded,
     });
     return;
   }
@@ -255,9 +256,8 @@ async function fund(request: IncomingMessage, response: ServerResponse) {
     return;
   }
   reply(response, 200, {
-    funded: input.address,
-    symbol: asset.symbol,
-    signatures: [],
+    tokensAdded: true,
+    solAdded,
   });
 }
 

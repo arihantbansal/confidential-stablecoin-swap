@@ -111,7 +111,10 @@ beforeEach(() => {
     confidential: 2n,
     pending: 0n,
   });
-  engineApi.requestFunds.mockResolvedValue(undefined);
+  engineApi.requestFunds.mockResolvedValue({
+    tokensAdded: false,
+    solAdded: false,
+  });
   engineApi.unlockSession.mockResolvedValue({});
   engineApi.ensureConfidentialAccount.mockResolvedValue(undefined);
 });
@@ -254,5 +257,37 @@ describe("application controller", () => {
     ]);
     expect(application.getSnapshot().status).toBeNull();
     expect(toast.success).not.toHaveBeenCalled();
+  });
+  it.each([
+    [{ tokensAdded: false, solAdded: false }, null],
+    [{ tokensAdded: true, solAdded: false }, "USDC topped up to 100"],
+    [{ tokensAdded: false, solAdded: true }, "SOL added for fees"],
+  ] as const)(
+    "keeps top-ups out of transaction receipts: %j",
+    async (funding, message) => {
+      const application = await connectedApplication();
+      const { toast } = await import("sonner");
+      engineApi.requestFunds.mockResolvedValueOnce(funding);
+      await application.funds();
+      expect(application.getSnapshot().result).toBeNull();
+      expect(application.getSnapshot().busy).toBe(false);
+      if (message) expect(toast.success).toHaveBeenCalledWith(message);
+      else expect(toast.success).not.toHaveBeenCalled();
+    },
+  );
+
+  it("keeps unknown funding confirmations available for review", async () => {
+    const application = await connectedApplication();
+    engineApi.requestFunds.mockRejectedValueOnce(
+      Object.assign(new Error("timeout"), {
+        unresolvedSignatures: ["airdrop-signature"],
+      }),
+    );
+    await application.funds();
+    expect(application.getSnapshot().result?.unresolved).toEqual([
+      "airdrop-signature",
+    ]);
+    await application.funds();
+    expect(engineApi.requestFunds).toHaveBeenCalledTimes(2);
   });
 });

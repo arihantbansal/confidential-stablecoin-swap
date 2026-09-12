@@ -562,7 +562,7 @@ async function withdrawTokens(
 export async function requestFunds(
   target: string,
   symbol: string,
-): Promise<void> {
+): Promise<{ tokensAdded: boolean; solAdded: boolean }> {
   const response = await fetch("/api/local-fund", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -582,6 +582,7 @@ export async function requestFunds(
       throw Object.assign(error, { unresolvedSignatures: [body.signature] });
     throw error;
   }
+  return response.json();
 }
 
 async function sendStep(

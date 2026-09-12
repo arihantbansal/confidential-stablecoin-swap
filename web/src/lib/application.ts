@@ -460,7 +460,7 @@ export function createApplication() {
   }
   async function operate(
     session: Session,
-    message: string,
+    message: string | null,
     action: (
       api: typeof import("@/lib/engine"),
       onProgress: Progress,
@@ -479,12 +479,15 @@ export function createApplication() {
       if (!active) return false;
       patch({
         status: null,
-        result: {
-          message,
-          confirmed: Array.from(new Set([...confirmed, ...signatures])),
-          unresolved: [],
-          failed: [],
-        },
+        result:
+          message === null
+            ? null
+            : {
+                message,
+                confirmed: Array.from(new Set([...confirmed, ...signatures])),
+                unresolved: [],
+                failed: [],
+              },
       });
       return current(id);
     } catch (error) {
@@ -532,15 +535,21 @@ export function createApplication() {
   async function funds() {
     const session = state.connection?.session;
     if (!session) return;
-    await operate(
-      session,
-      `${session.selectedAsset.symbol} balance refreshed`,
-      async (api, onProgress) => {
-        await api.requestFunds(session.owner, session.selectedAsset.symbol);
-        await api.ensureConfidentialAccount(session, onProgress);
-        return [];
-      },
-    );
+    let funding = { tokensAdded: false, solAdded: false };
+    const completed = await operate(session, null, async (api, onProgress) => {
+      funding = await api.requestFunds(
+        session.owner,
+        session.selectedAsset.symbol,
+      );
+      await api.ensureConfidentialAccount(session, onProgress);
+      return [];
+    });
+    if (!completed) return;
+    if (funding.tokensAdded) {
+      toast.success(`${session.selectedAsset.symbol} topped up to 100`);
+    } else if (funding.solAdded) {
+      toast.success("SOL added for fees");
+    }
   }
   async function unlock() {
     const session = state.connection?.session;

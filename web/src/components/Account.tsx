@@ -207,7 +207,7 @@ export function AccountDialog({
             onClick={onFunds}
             className="press min-h-11 w-full"
           >
-            Get {symbol}
+            Top up {symbol}
           </Button>
 
           <Button
