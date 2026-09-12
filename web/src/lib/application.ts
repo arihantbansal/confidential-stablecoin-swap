@@ -1,18 +1,20 @@
 import {
-  address,
-  generateKeyPairSigner,
-  signature as parseSignature,
-} from "@solana/kit";
+  reconcileSignatures,
+  type TransactionClient,
+} from "@confidential-stablecoin/runtime/transactions";
+import { address, generateKeyPairSigner } from "@solana/kit";
 import { toast } from "sonner";
 import { formatBaseUnits } from "@/lib/amounts";
 import type { BalanceView, Progress } from "@/lib/engine";
 import { transactionUrl } from "@/lib/explorer";
+import { mergeFailure } from "@/lib/failures";
 import {
   type LocalAsset,
   type LocalManifest,
   loadManifest,
 } from "@/lib/manifest";
 import type { Session } from "@/lib/session";
+import type { BalanceState, ExchangeAction } from "@/lib/types";
 import {
   asKitSigner,
   connectWallet,
@@ -23,8 +25,6 @@ import {
   type Wallet,
 } from "@/lib/wallets";
 
-export type BalanceState = "loading" | "ready" | "locked" | "error";
-export type ExchangeAction = "convert" | "send" | "withdraw";
 interface Connection {
   kind: "test" | "injected";
   session: Session;
@@ -32,12 +32,14 @@ interface Connection {
   wallet?: Wallet;
   stopWatching?: () => void;
 }
+
 export interface OperationResult {
   message: string;
   confirmed: string[];
   unresolved: string[];
   failed: string[];
 }
+
 export interface ApplicationState {
   manifest: LocalManifest | null;
   manifestError: string | null;
@@ -56,13 +58,32 @@ export interface ApplicationState {
   accountOpen: boolean;
   detail: { title: string; body: string } | null;
 }
+
 const EMPTY_BALANCES: BalanceView = {
   public: null,
   confidential: null,
   pending: null,
 };
+
 const engine = () => import("@/lib/engine");
 const sessionTools = () => import("@/lib/session");
+
+function resultMessage(
+  confirmed: readonly string[],
+  unresolved: readonly string[],
+  failed: readonly string[],
+): string {
+  if (unresolved.length > 0) {
+    return "Confirmation is still unknown. Check status before another transaction.";
+  }
+  if (failed.length > 0 && confirmed.length === 0) {
+    return "The operation did not complete.";
+  }
+  if (failed.length > 0 || confirmed.length > 0) {
+    return "Some steps completed. Review updated balances before continuing.";
+  }
+  return "The operation did not complete.";
+}
 
 /** State changes happen in events; React only subscribes to immutable snapshots. */
 export function createApplication() {
@@ -88,9 +109,11 @@ export function createApplication() {
   let generation = 0;
   let active = false;
   let operationPending = false;
-  let unresolvedRpc: Session["client"]["rpc"] | null = null;
+  let unresolvedClient: Pick<TransactionClient, "rpc"> | null = null;
   let refreshPromise: Promise<void> | null = null;
+  let refreshGeneration = 0;
   let manifestRequest = 0;
+
   const patch = (next: Partial<ApplicationState>) => {
     state = { ...state, ...next };
     for (const listener of listeners) listener();
@@ -134,8 +157,10 @@ export function createApplication() {
           freeSessionKeys(session);
       });
   };
+
   function disconnect() {
     generation++;
+    refreshGeneration++;
     const previous = state.connection;
     dispose(previous);
     refreshPromise = null;
@@ -148,7 +173,7 @@ export function createApplication() {
       applyingMint: null,
       busy: operationPending,
       status: null,
-      result: unresolvedRpc ? state.result : null,
+      result: unresolvedClient ? state.result : null,
       balanceState: "loading",
     });
     if (previous?.wallet)
@@ -160,6 +185,7 @@ export function createApplication() {
         ),
       );
   }
+
   async function load() {
     const request = ++manifestRequest;
     try {
@@ -183,6 +209,7 @@ export function createApplication() {
         });
     }
   }
+
   async function refresh(force = false): Promise<void> {
     const connection = state.connection;
     if (!connection) return;
@@ -191,47 +218,56 @@ export function createApplication() {
       await refreshPromise;
       if (!sameConnection(connection)) return;
     }
+
     const selected = connection.session;
+    const token = ++refreshGeneration;
     const run = (async () => {
       const api = await engine();
+      if (token !== refreshGeneration || !sameConnection(connection)) return;
+
+      const sessions = Array.from(connection.sessions.values());
       const [publicResult, ...assetResults] = await Promise.allSettled([
         api.readUnwrappedBalance(selected),
-        ...Array.from(connection.sessions.values()).map((session) =>
-          api.readBalances(session),
-        ),
+        ...sessions.map((session) => api.readBalances(session)),
       ]);
-      if (!sameConnection(connection) || state.connection?.session !== selected)
+      if (
+        token !== refreshGeneration ||
+        !sameConnection(connection) ||
+        state.connection?.session !== selected
+      ) {
         return;
-      const sessions = Array.from(connection.sessions.values());
+      }
+
       const selectedResult = assetResults[sessions.indexOf(selected)];
       const balances =
         selectedResult?.status === "fulfilled"
-          ? (selectedResult.value as BalanceView)
+          ? selectedResult.value
           : EMPTY_BALANCES;
       const unwrapped =
-        publicResult.status === "fulfilled"
-          ? (publicResult.value as bigint | null)
-          : null;
+        publicResult.status === "fulfilled" ? publicResult.value : null;
       const incoming = new Map(
         state.incomingTransfers.map((item) => [item.asset.mint, item]),
       );
+
       assetResults.forEach((result, index) => {
         if (result.status !== "fulfilled") return;
         const session = sessions[index];
-        const view = result.value as BalanceView;
-        if (view.pending === 0n) incoming.delete(session.selectedAsset.mint);
+        const view = result.value;
+        const mint = session.selectedAsset.mint;
+        if (view.pending === 0n) incoming.delete(mint);
         else if (view.pending !== null)
-          incoming.set(session.selectedAsset.mint, {
+          incoming.set(mint, {
             asset: session.selectedAsset,
             amount: view.pending,
           });
         else if (view.hasPending)
-          incoming.set(session.selectedAsset.mint, {
+          incoming.set(mint, {
             asset: session.selectedAsset,
             amount: null,
           });
-        else incoming.delete(session.selectedAsset.mint);
+        else incoming.delete(mint);
       });
+
       patch({
         balances,
         unwrapped,
@@ -245,22 +281,29 @@ export function createApplication() {
               : "locked",
       });
     })();
+
     refreshPromise = run;
     try {
       await run;
     } catch {
-      if (sameConnection(connection) && state.connection?.session === selected)
+      if (
+        token === refreshGeneration &&
+        sameConnection(connection) &&
+        state.connection?.session === selected
+      ) {
         patch({
           balanceState: "error",
           balances: EMPTY_BALANCES,
           unwrapped: null,
         });
+      }
     } finally {
       if (refreshPromise === run) refreshPromise = null;
     }
   }
+
   const begin = (message: string) => {
-    if (state.busy || operationPending || unresolvedRpc) return null;
+    if (state.busy || operationPending || unresolvedClient) return null;
     const id = ++generation;
     patch({ busy: true, status: { state: "working", message } });
     return id;
@@ -283,6 +326,7 @@ export function createApplication() {
         },
       });
     };
+
   async function makeConnection(
     signer: Session["signer"],
     owner: Session["owner"],
@@ -291,19 +335,15 @@ export function createApplication() {
   ): Promise<Connection> {
     const manifest = state.manifest;
     if (!manifest) throw new Error("Load the local deployment first.");
-    const { createSession } = await sessionTools();
-    const sessions = new Map(
-      manifest.assets.map((asset) => [
-        asset.mint.toString(),
-        createSession(manifest, signer, owner, asset),
-      ]),
-    );
+    const { createSessions } = await sessionTools();
+    const sessions = createSessions(manifest, signer, owner);
     const session = sessions.get(
       (state.selectedAsset ?? manifest.assets[0]).mint,
     );
     if (!session) throw new Error("Selected asset is unavailable.");
     return { kind, session, sessions, wallet };
   }
+
   async function connect(wallet?: Wallet) {
     if (!state.manifest) {
       notifyError(
@@ -402,8 +442,13 @@ export function createApplication() {
       if (current(id)) patch({ busy: false });
     }
   }
+
   async function selectAsset(asset: LocalAsset) {
-    if (state.busy || state.selectedAsset?.mint === asset.mint || unresolvedRpc)
+    if (
+      state.busy ||
+      state.selectedAsset?.mint === asset.mint ||
+      unresolvedClient
+    )
       return;
     const connection = state.connection;
     if (!connection) {
@@ -439,41 +484,35 @@ export function createApplication() {
       }
     }
   }
+
   function failure(error: unknown, confirmed: string[], session: Session) {
-    const payload = (error as { failure?: unknown })?.failure ?? error;
-    const details = payload as {
-      confirmedSignatures?: string[];
-      unresolvedSignatures?: string[];
-      failedSignatures?: string[];
-    };
-    const unresolved = details?.unresolvedSignatures ?? [];
-    const allConfirmed = Array.from(
-      new Set([...confirmed, ...(details?.confirmedSignatures ?? [])]),
-    );
-    unresolvedRpc = unresolved.length ? session.client.rpc : null;
+    const details = mergeFailure(error, confirmed);
+    unresolvedClient =
+      details.unresolvedSignatures.length > 0 ? session.client : null;
     patch({
       status: null,
       result: {
-        message: unresolved.length
-          ? "Confirmation is still unknown. Check status before another transaction."
-          : allConfirmed.length
-            ? "Some steps completed. Review updated balances before continuing."
-            : "The operation did not complete.",
-        confirmed: allConfirmed,
-        unresolved,
-        failed: details?.failedSignatures ?? [],
+        message: resultMessage(
+          details.confirmedSignatures,
+          details.unresolvedSignatures,
+          details.failedSignatures,
+        ),
+        confirmed: details.confirmedSignatures,
+        unresolved: details.unresolvedSignatures,
+        failed: details.failedSignatures,
       },
     });
     notifyError(
-      unresolved.length
+      details.unresolvedSignatures.length > 0
         ? "Confirmation not yet known."
         : "Could not complete the operation.",
       error,
-      unresolved.length
+      details.unresolvedSignatures.length > 0
         ? "Use Check status. Do not send the same transaction again."
         : "Review the result and refreshed balances before retrying.",
     );
   }
+
   async function operate(
     session: Session,
     message: string | null,
@@ -517,6 +556,7 @@ export function createApplication() {
       if (active) patch({ busy: false, applyingMint: null });
     }
   }
+
   async function submit(
     action: ExchangeAction,
     amount: bigint,
@@ -536,6 +576,7 @@ export function createApplication() {
       return (await api.withdraw(session, amount, onProgress)).signatures;
     });
   }
+
   async function applyIncoming(asset: LocalAsset) {
     const session = state.connection?.sessions.get(asset.mint);
     if (!session) return;
@@ -550,6 +591,7 @@ export function createApplication() {
       asset.mint,
     );
   }
+
   async function funds() {
     const session = state.connection?.session;
     if (!session) return;
@@ -569,6 +611,7 @@ export function createApplication() {
       toast.success("SOL added for fees");
     }
   }
+
   async function unlock() {
     const session = state.connection?.session;
     if (!session) return;
@@ -591,36 +634,26 @@ export function createApplication() {
       }
     }
   }
+
   async function checkStatus() {
-    const rpc = unresolvedRpc;
+    const client = unresolvedClient;
     const result = state.result;
-    if (!rpc || !result || state.busy) return;
+    if (!client || !result || state.busy) return;
     const id = ++generation;
     patch({ busy: true });
     try {
-      const { value } = await rpc
-        .getSignatureStatuses(result.unresolved.map(parseSignature), {
-          searchTransactionHistory: true,
-        })
-        .send();
+      const reconciled = await reconcileSignatures(client, result.unresolved);
       if (!current(id)) return;
-      const next = {
+      const next: OperationResult = {
         ...result,
-        confirmed: [...result.confirmed],
-        failed: [...result.failed],
-        unresolved: [] as string[],
+        confirmed: Array.from(
+          new Set([...result.confirmed, ...reconciled.confirmed]),
+        ),
+        failed: Array.from(new Set([...result.failed, ...reconciled.failed])),
+        unresolved: reconciled.unresolved,
+        message: "",
       };
-      value.forEach((status, index) => {
-        const signature = result.unresolved[index];
-        if (status?.err) next.failed.push(signature);
-        else if (
-          status?.confirmationStatus === "confirmed" ||
-          status?.confirmationStatus === "finalized"
-        )
-          next.confirmed.push(signature);
-        else next.unresolved.push(signature);
-      });
-      if (next.unresolved.length === 0) unresolvedRpc = null;
+      if (next.unresolved.length === 0) unresolvedClient = null;
       if (next.unresolved.length === 0 && next.failed.length === 0) {
         patch({ result: null });
         notifySuccess("Transaction confirmed", next.confirmed.at(-1));
@@ -642,6 +675,7 @@ export function createApplication() {
       if (current(id)) patch({ busy: false });
     }
   }
+
   function start() {
     active = true;
     patch({ wallets: listWallets() });
@@ -656,6 +690,7 @@ export function createApplication() {
     return () => {
       active = false;
       generation++;
+      refreshGeneration++;
       manifestRequest++;
       window.clearInterval(interval);
       unwatch();
@@ -664,6 +699,7 @@ export function createApplication() {
       dispose(state.connection);
     };
   }
+
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => {
@@ -688,7 +724,7 @@ export function createApplication() {
     clearStatus: () => patch({ status: null }),
     closeDetails: () => patch({ detail: null }),
     clearResult: () => {
-      if (!unresolvedRpc) patch({ result: null });
+      if (!unresolvedClient) patch({ result: null });
     },
   };
 }

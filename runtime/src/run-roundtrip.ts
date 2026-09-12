@@ -43,12 +43,15 @@ import {
   WRAPPER_PROGRAM_ADDRESS,
 } from "#runtime/config";
 import { loadOrCreateSigner } from "#runtime/keystore";
-import { sendInstructions, sendPlan } from "#runtime/send";
+import {
+  sendInstructions,
+  sendPlanConfirmed as sendPlan,
+} from "#runtime/transactions";
 import {
   findWrappedMintAuthorityPda,
   getUnwrapInstruction,
   getWrapInstruction,
-} from "#runtime/wrapInstructions";
+} from "#runtime/wrap";
 
 interface Manifest {
   assets: Array<{
@@ -216,9 +219,13 @@ async function main(): Promise<void> {
     }
 
     // Wrap 100 units: A unwrapped -> escrow, 100 public wrapped to A.
-    const wrappedMintAuthority = await findWrappedMintAuthorityPda(wrappedMint);
+    const wrappedMintAuthority = await findWrappedMintAuthorityPda(
+      WRAPPER_PROGRAM_ADDRESS,
+      wrappedMint,
+    );
     const wrapSig = await sendInstructions(client, payer, [
       getWrapInstruction(
+        WRAPPER_PROGRAM_ADDRESS,
         {
           recipientWrappedTokenAccount: wrappedAtaA,
           wrappedMint,
@@ -346,6 +353,7 @@ async function main(): Promise<void> {
     record("withdraw-b-30", withdrawSigsB, "B withdrew 30 to public balance");
     const unwrapBSig = await sendInstructions(client, payer, [
       getUnwrapInstruction(
+        WRAPPER_PROGRAM_ADDRESS,
         {
           unwrappedEscrow: escrow,
           recipientUnwrappedToken: ataB,
@@ -381,6 +389,7 @@ async function main(): Promise<void> {
     record("withdraw-a-70", withdrawSigsA, "A withdrew 70 to public balance");
     const unwrapASig = await sendInstructions(client, payer, [
       getUnwrapInstruction(
+        WRAPPER_PROGRAM_ADDRESS,
         {
           unwrappedEscrow: escrow,
           recipientUnwrappedToken: ataA,

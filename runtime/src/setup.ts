@@ -22,13 +22,13 @@ import {
   WRAPPER_PROGRAM_ADDRESS,
 } from "#runtime/config";
 import { loadOrCreateSigner } from "#runtime/keystore";
-import { airdropConfirmed, sendInstructions } from "#runtime/send";
+import { airdropConfirmed, sendInstructions } from "#runtime/transactions";
 import {
   findBackpointerPda,
   findWrappedMintAuthorityPda,
   findWrappedMintPda,
   getCreateMintInstruction,
-} from "#runtime/wrapInstructions";
+} from "#runtime/wrap";
 
 const SOL_TOP_UP = 2_000_000_000n;
 async function surfnetSetTokenAccount(
@@ -117,11 +117,18 @@ async function main(): Promise<void> {
       tokenProgram.toString(),
     );
     const wrappedMint = await findWrappedMintPda(
+      WRAPPER_PROGRAM_ADDRESS,
       asset.mint,
       TOKEN_2022_PROGRAM_ADDRESS,
     );
-    const backpointer = await findBackpointerPda(wrappedMint);
-    const wrappedMintAuthority = await findWrappedMintAuthorityPda(wrappedMint);
+    const backpointer = await findBackpointerPda(
+      WRAPPER_PROGRAM_ADDRESS,
+      wrappedMint,
+    );
+    const wrappedMintAuthority = await findWrappedMintAuthorityPda(
+      WRAPPER_PROGRAM_ADDRESS,
+      wrappedMint,
+    );
     if (!(await fetchEncodedAccount(client.rpc, wrappedMint)).exists) {
       const mintSize = BigInt(
         getMintSize([
@@ -151,7 +158,7 @@ async function main(): Promise<void> {
           destination: backpointer,
           amount: lamports(backpointerRent),
         }),
-        getCreateMintInstruction({
+        getCreateMintInstruction(WRAPPER_PROGRAM_ADDRESS, {
           wrappedMint,
           backpointer,
           unwrappedMint: asset.mint,

@@ -56,24 +56,30 @@ export function createSessionClient(
     );
 }
 
-export function createSession(
+/** One RPC client shared by every asset session for a connected wallet. */
+export function createSessions(
   manifest: LocalManifest,
   signer: FullSigner,
   owner: Address,
-  selectedAsset: LocalAsset = manifest.assets[0],
-): Session {
-  return {
-    manifest,
-    selectedAsset,
-    client: createSessionClient(manifest, signer),
-    signer,
-    owner,
-    keys: null,
-    unlockingKeys: null,
-    keyUseCount: 0,
-    disposeKeysWhenIdle: false,
-    disposed: false,
-  };
+): Map<string, Session> {
+  const client = createSessionClient(manifest, signer);
+  return new Map(
+    manifest.assets.map((asset) => [
+      asset.mint.toString(),
+      {
+        manifest,
+        selectedAsset: asset,
+        client,
+        signer,
+        owner,
+        keys: null,
+        unlockingKeys: null,
+        keyUseCount: 0,
+        disposeKeysWhenIdle: false,
+        disposed: false,
+      },
+    ]),
+  );
 }
 
 export async function deriveKeys(

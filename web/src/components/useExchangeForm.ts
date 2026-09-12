@@ -1,9 +1,9 @@
 import { type FormEvent, useId, useRef, useState } from "react";
-import type { ExchangeAction, ExchangeMode } from "@/components/exchangeTypes";
 import { formatBaseUnits } from "@/lib/amounts";
 import type { BalanceView } from "@/lib/engine";
 import { getExchangeState } from "@/lib/exchange";
 import type { LocalAsset } from "@/lib/manifest";
+import type { ExchangeAction, ExchangeMode } from "@/lib/types";
 
 interface UseExchangeFormOptions {
   balances: BalanceView;

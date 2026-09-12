@@ -35,6 +35,7 @@ import {
   getConfidentialWithdrawInstructionPlan,
   getCreateConfidentialTransferAccountInstructionPlan,
 } from "@solana-program/token-2022/confidential";
+import { failureError } from "@/lib/failures";
 import {
   deriveKeys,
   disposeKeys,
@@ -47,11 +48,9 @@ import {
 } from "@/lib/session";
 
 export type TxStage =
-  | "idle"
   | "preparing-account"
   | "preparing-proof"
   | "awaiting-approval"
-  | "submitted"
   | "confirmed";
 
 export interface BalanceView {
@@ -66,13 +65,6 @@ export type Progress = (
   message: string,
   signature?: string,
 ) => void;
-
-export class RecipientNotReadyError extends Error {
-  constructor(reason: string) {
-    super(reason);
-    this.name = "RecipientNotReadyError";
-  }
-}
 
 interface ConfidentialExtension {
   approved: boolean;
@@ -387,7 +379,7 @@ export async function checkRecipient(
 ): Promise<Address> {
   const trimmed = recipient.trim();
   if (!isAddress(trimmed)) {
-    throw new RecipientNotReadyError("Recipient address is not valid");
+    throw new Error("Recipient address is not valid");
   }
   const { wrappedMint } = addresses(session);
   const [ata] = await findAssociatedTokenPda({
@@ -397,18 +389,16 @@ export async function checkRecipient(
   });
   const account = await fetchMaybeToken(session.client.rpc, ata);
   if (!account.exists) {
-    throw new RecipientNotReadyError(
+    throw new Error(
       `Recipient has no ${session.selectedAsset.symbol} confidential account yet`,
     );
   }
   const extension = confidentialExtension(account.data);
   if (!extension) {
-    throw new RecipientNotReadyError(
-      "Recipient has not prepared a confidential account",
-    );
+    throw new Error("Recipient has not prepared a confidential account");
   }
   if (!extension.approved || !extension.allowConfidentialCredits) {
-    throw new RecipientNotReadyError(
+    throw new Error(
       "Recipient account is not approved for confidential transfers",
     );
   }
@@ -577,12 +567,20 @@ export async function requestFunds(
       error?: string;
       signature?: string;
     } | null;
-    const error = new Error(body?.error ?? "Local funding failed");
-    if (body?.signature)
-      throw Object.assign(error, { unresolvedSignatures: [body.signature] });
-    throw error;
+    if (body?.signature) {
+      throw failureError({
+        cause: body.error ?? "Local funding failed",
+        confirmedSignatures: [],
+        failedSignatures: [],
+        unresolvedSignatures: [body.signature],
+      });
+    }
+    throw new Error(body?.error ?? "Local funding failed");
   }
-  return response.json();
+  return (await response.json()) as {
+    tokensAdded: boolean;
+    solAdded: boolean;
+  };
 }
 
 async function sendStep(
@@ -608,36 +606,6 @@ async function sendSteps(
   return signatures;
 }
 
-class OperationFailure extends Error {
-  readonly confirmedSignatures: string[];
-  readonly unresolvedSignatures: string[];
-  readonly failedSignatures: string[];
-  constructor(cause: unknown, confirmed: Set<string>) {
-    super(cause instanceof Error ? cause.message : "Operation failed", {
-      cause,
-    });
-    const transactionError = cause as {
-      failure?: {
-        confirmedSignatures?: string[];
-        unresolvedSignatures?: string[];
-        failedSignatures?: string[];
-      };
-    };
-    const failure =
-      transactionError?.failure ??
-      (cause as {
-        confirmedSignatures?: string[];
-        unresolvedSignatures?: string[];
-        failedSignatures?: string[];
-      });
-    this.confirmedSignatures = Array.from(
-      new Set([...confirmed, ...(failure?.confirmedSignatures ?? [])]),
-    );
-    this.unresolvedSignatures = failure?.unresolvedSignatures ?? [];
-    this.failedSignatures = failure?.failedSignatures ?? [];
-  }
-}
-
 async function withSessionOperation<T>(
   session: Session,
   onProgress: Progress,
@@ -653,7 +621,7 @@ async function withSessionOperation<T>(
       onProgress(stage, message, signature);
     });
   } catch (error) {
-    throw new OperationFailure(error, confirmed);
+    throw failureError(error, confirmed);
   } finally {
     releaseSessionKeys(session);
   }

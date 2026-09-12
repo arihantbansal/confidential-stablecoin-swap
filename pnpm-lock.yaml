@@ -18,7 +18,7 @@ importers:
         specifier: ^0.14.1
         version: 0.14.1(@solana/kit@8.3.0(typescript@5.9.3))
       '@solana-program/token':
-        specifier: ^0.16.0
+        specifier: ^0.16.1
         version: 0.16.1(@solana/kit@8.3.0(typescript@5.9.3))
       '@solana-program/token-2022':
         specifier: ^0.17.0
@@ -37,10 +37,10 @@ importers:
         version: 0.5.2
     devDependencies:
       '@types/node':
-        specifier: ^24.0.0
-        version: 24.13.4
+        specifier: ^26.5.1
+        version: 26.5.1
       typescript:
-        specifier: ^5.8.0
+        specifier: ^5.9.3
         version: 5.9.3
 
   web:
@@ -1188,9 +1188,6 @@ packages:
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
 
-  '@types/node@24.13.4':
-    resolution: {integrity: sha512-YJ7EqCstVTzIr0fMr7qul/977en+pQHrfmuKIo6Zr9i75Be21dr3MovcfvGtyvi2HAUrRerWps5sMO9I7WaxDw==}
-
   '@types/node@26.5.1':
     resolution: {integrity: sha512-CzNm2FezW4VR/LjG6yUdiEgLE/rAQ9Slj5gCu/C2VrdcW7I0ahNZ8DRbHT7zOZ6r3ONgd/bsQIeSaoDGrd1C6g==}
 
@@ -1600,9 +1597,6 @@ packages:
     resolution: {integrity: sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==}
     engines: {node: '>=14.17'}
     hasBin: true
-
-  undici-types@7.18.2:
-    resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
   undici-types@8.10.2:
     resolution: {integrity: sha512-7/+aSjzkUoLc92hV22bTW4aGanXf800zbwguhcICs0OAoCF9wDOE4wkopQ+SqfhXZm8mCK8gHpdTs7pZUWzK3w==}
@@ -2690,10 +2684,6 @@ snapshots:
 
   '@types/estree@1.0.9': {}
 
-  '@types/node@24.13.4':
-    dependencies:
-      undici-types: 7.18.2
-
   '@types/node@26.5.1':
     dependencies:
       undici-types: 8.9.0
@@ -3033,8 +3023,6 @@ snapshots:
     optional: true
 
   typescript@5.9.3: {}
-
-  undici-types@7.18.2: {}
 
   undici-types@8.10.2: {}
 

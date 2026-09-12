@@ -10,9 +10,8 @@ import {
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBaseUnits } from "@/lib/amounts";
+import { type BalanceState, unknownBalanceLabel } from "@/lib/types";
 import type { Wallet } from "@/lib/wallets";
-
-export type BalanceState = "loading" | "ready" | "locked" | "error";
 
 interface WalletDialogProps {
   open: boolean;
@@ -100,12 +99,6 @@ interface AccountDialogProps {
   symbol: string;
   decimals?: number;
   balanceState?: BalanceState;
-}
-
-function unknownBalanceLabel(balanceState?: BalanceState): string {
-  if (balanceState === "locked") return "Locked";
-  if (balanceState === "error") return "Unavailable";
-  return "—";
 }
 
 export function AccountDialog({

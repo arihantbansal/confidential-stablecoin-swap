@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
-import type { ExchangeStatus } from "@/components/exchangeTypes";
 import { Button } from "@/components/ui/button";
+import type { ExchangeStatus } from "@/lib/types";
 
 interface ExchangeActionButtonProps {
   connected: boolean;

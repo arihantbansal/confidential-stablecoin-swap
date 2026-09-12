@@ -66,7 +66,7 @@ vi.mock("@/lib/wallets", () => ({
   onWalletsChange: vi.fn(() => () => undefined),
 }));
 vi.mock("@/lib/session", () => ({
-  createSession: vi.fn(() => session),
+  createSessions: vi.fn(() => new Map([[asset.mint.toString(), session]])),
   freeSessionKeys: vi.fn(),
 }));
 vi.mock("@/lib/engine", () => engineApi);
@@ -156,7 +156,13 @@ describe("application controller", () => {
 
   it("blocks resubmission while unresolved and classifies confirmed errors as failed", async () => {
     const application = await connectedApplication();
-    const unresolved = Object.assign(new Error("timeout"), {
+    const { TransactionFailureError } = await import(
+      "@confidential-stablecoin/runtime/transactions"
+    );
+    const unresolved = new TransactionFailureError({
+      cause: "timeout",
+      confirmedSignatures: [],
+      failedSignatures: [],
       unresolvedSignatures: ["signature-1"],
     });
     engineApi.convert
@@ -185,8 +191,14 @@ describe("application controller", () => {
   });
   it("preserves unresolved receipts across disconnect and allows a status check without keys", async () => {
     const application = await connectedApplication();
+    const { TransactionFailureError } = await import(
+      "@confidential-stablecoin/runtime/transactions"
+    );
     engineApi.convert.mockRejectedValueOnce(
-      Object.assign(new Error("timeout"), {
+      new TransactionFailureError({
+        cause: "timeout",
+        confirmedSignatures: [],
+        failedSignatures: [],
         unresolvedSignatures: ["signature-1"],
       }),
     );
@@ -205,6 +217,9 @@ describe("application controller", () => {
     "keeps a late %s receipt when disconnect happens during a send",
     async (outcome) => {
       const application = await connectedApplication();
+      const { TransactionFailureError } = await import(
+        "@confidential-stablecoin/runtime/transactions"
+      );
       let finish: (signatures: string[]) => void = () => undefined;
       let fail: (error: Error) => void = () => undefined;
       engineApi.convert.mockImplementationOnce(
@@ -225,7 +240,10 @@ describe("application controller", () => {
       if (outcome === "confirmed") finish(["late-signature"]);
       else
         fail(
-          Object.assign(new Error("timeout"), {
+          new TransactionFailureError({
+            cause: "timeout",
+            confirmedSignatures: [],
+            failedSignatures: [],
             unresolvedSignatures: ["late-signature"],
           }),
         );
@@ -276,8 +294,14 @@ describe("application controller", () => {
 
   it("keeps unknown funding confirmations available for review", async () => {
     const application = await connectedApplication();
+    const { TransactionFailureError } = await import(
+      "@confidential-stablecoin/runtime/transactions"
+    );
     engineApi.requestFunds.mockRejectedValueOnce(
-      Object.assign(new Error("timeout"), {
+      new TransactionFailureError({
+        cause: "timeout",
+        confirmedSignatures: [],
+        failedSignatures: [],
         unresolvedSignatures: ["airdrop-signature"],
       }),
     );
@@ -285,6 +309,8 @@ describe("application controller", () => {
     expect(application.getSnapshot().result?.unresolved).toEqual([
       "airdrop-signature",
     ]);
+    // connect() already funded once; the failed top-up is the second call.
+    // A third attempt must stay blocked until Check status clears it.
     await application.funds();
     expect(engineApi.requestFunds).toHaveBeenCalledTimes(2);
   });

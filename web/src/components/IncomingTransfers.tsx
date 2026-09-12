@@ -48,14 +48,7 @@ function sameTransfer(
   right: IncomingTransfer,
 ): boolean {
   return (
-    keyOf(left.asset) === keyOf(right.asset) &&
-    left.amount === right.amount &&
-    left.asset.symbol === right.asset.symbol &&
-    left.asset.decimals === right.asset.decimals &&
-    left.asset.tokenProgram === right.asset.tokenProgram &&
-    left.asset.wrapped.mint === right.asset.wrapped.mint &&
-    left.asset.wrapped.escrow === right.asset.wrapped.escrow &&
-    left.asset.wrapped.mintAuthority === right.asset.wrapped.mintAuthority
+    keyOf(left.asset) === keyOf(right.asset) && left.amount === right.amount
   );
 }
 

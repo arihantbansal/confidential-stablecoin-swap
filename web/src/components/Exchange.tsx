@@ -5,22 +5,17 @@ import { ExchangeMode } from "@/components/ExchangeMode";
 import { ExchangePendingConversion } from "@/components/ExchangePendingConversion";
 import { ExchangeRecipientField } from "@/components/ExchangeRecipientField";
 import { ExchangeReview } from "@/components/ExchangeReview";
-import type {
-  ExchangeAction,
-  ExchangeStatus,
-} from "@/components/exchangeTypes";
 import { Card, CardContent } from "@/components/ui/card";
 import { useExchangeForm } from "@/components/useExchangeForm";
 import { formatBaseUnits } from "@/lib/amounts";
 import type { BalanceView } from "@/lib/engine";
 import type { LocalAsset } from "@/lib/manifest";
-
-export type {
-  ExchangeAction,
-  ExchangeStatus,
-} from "@/components/exchangeTypes";
-
-export type BalanceState = "loading" | "ready" | "locked" | "error";
+import {
+  type BalanceState,
+  type ExchangeAction,
+  type ExchangeStatus,
+  unknownBalanceLabel,
+} from "@/lib/types";
 
 interface ExchangeProps {
   connected: boolean;
@@ -39,13 +34,6 @@ interface ExchangeProps {
   assets: readonly LocalAsset[];
   onAssetChange: (asset: LocalAsset) => void;
   balanceState?: BalanceState;
-}
-
-function unknownBalanceLabel(balanceState?: BalanceState): string {
-  if (balanceState === "loading") return "Loading…";
-  if (balanceState === "locked") return "Locked";
-  if (balanceState === "error") return "Unavailable";
-  return "—";
 }
 
 function formatBalance(
