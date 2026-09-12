@@ -7,12 +7,7 @@ import {
 } from "@solana/kit";
 import { KEYS_DIR } from "#runtime/config";
 
-type LocalIdentity =
-  | "local-payer"
-  | "mint-authority"
-  | "user-a"
-  | "user-b"
-  | "test-usd-mint";
+type LocalIdentity = "local-payer" | "user-a" | "user-b";
 
 export async function loadOrCreateSigner(name: LocalIdentity) {
   const path = join(KEYS_DIR, `${name}.json`);

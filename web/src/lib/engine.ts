@@ -14,7 +14,10 @@ import {
 import {
   fetchMaybeToken,
   findAssociatedTokenPda,
+  findAssociatedTokenPda as findToken2022Ata,
   getConfidentialDepositInstruction,
+  getCreateAssociatedTokenIdempotentInstruction as getToken2022CreateAta,
+  getTokenDecoder as getToken2022Decoder,
   TOKEN_2022_PROGRAM_ADDRESS,
   type Token,
 } from "@solana-program/token-2022";
@@ -26,7 +29,6 @@ import {
   getConfidentialWithdrawInstructionPlan,
   getCreateConfidentialTransferAccountInstructionPlan,
 } from "@solana-program/token-2022/confidential";
-import type { LocalManifest } from "@/lib/manifest";
 import {
   deriveKeys,
   type Session,
@@ -87,17 +89,52 @@ function confidentialExtension(
   return undefined;
 }
 
-function addresses(manifest: LocalManifest) {
+function addresses(session: Session) {
+  const asset = session.selectedAsset;
   return {
-    wrapperProgram: manifest.wrapperProgram,
-    unwrappedMint: manifest.testUsd.mint,
-    wrappedMint: manifest.wrapped.mint,
-    escrow: manifest.wrapped.escrow,
+    wrapperProgram: session.manifest.wrapperProgram,
+    asset,
+    unwrappedMint: asset.mint,
+    wrappedMint: asset.wrapped.mint,
+    escrow: asset.wrapped.escrow,
   };
 }
 
+function findUnderlyingAta(session: Session) {
+  const { asset } = addresses(session);
+  return asset.tokenProgram === TOKEN_2022_PROGRAM_ADDRESS
+    ? findToken2022Ata({
+        owner: session.owner,
+        mint: asset.mint,
+        tokenProgram: asset.tokenProgram,
+      })
+    : findLegacyAta({
+        owner: session.owner,
+        mint: asset.mint,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      });
+}
+
+function createUnderlyingAta(session: Session, ata: Address) {
+  const { asset } = addresses(session);
+  return asset.tokenProgram === TOKEN_2022_PROGRAM_ADDRESS
+    ? getToken2022CreateAta({
+        payer: session.signer,
+        owner: session.owner,
+        mint: asset.mint,
+        ata,
+      })
+    : getLegacyCreateAta({
+        payer: session.signer,
+        owner: session.owner,
+        mint: asset.mint,
+        ata,
+        tokenProgram: TOKEN_PROGRAM_ADDRESS,
+      });
+}
+
 export async function unlockSession(session: Session): Promise<SessionKeys> {
-  const { wrappedMint } = addresses(session.manifest);
+  const { wrappedMint } = addresses(session);
   const keys = await deriveKeys(session.signer, session.owner, wrappedMint);
   const [ata] = await findAssociatedTokenPda({
     owner: session.owner,
@@ -130,7 +167,7 @@ function requireKeys(session: Session): SessionKeys {
 }
 
 export async function readBalances(session: Session): Promise<BalanceView> {
-  const { wrappedMint } = addresses(session.manifest);
+  const { wrappedMint } = addresses(session);
   const [ata] = await findAssociatedTokenPda({
     owner: session.owner,
     mint: wrappedMint,
@@ -165,24 +202,21 @@ export async function readBalances(session: Session): Promise<BalanceView> {
 export async function readUnwrappedBalance(
   session: Session,
 ): Promise<bigint | null> {
-  const { unwrappedMint } = addresses(session.manifest);
-  const [ata] = await findLegacyAta({
-    owner: session.owner,
-    mint: unwrappedMint,
-    tokenProgram: TOKEN_PROGRAM_ADDRESS,
-  });
+  const [ata] = await findUnderlyingAta(session);
   const account = await fetchEncodedAccount(session.client.rpc, ata);
   if (!account.exists) {
     return null;
   }
-  return getLegacyTokenDecoder().decode(account.data).amount;
+  return session.selectedAsset.tokenProgram === TOKEN_2022_PROGRAM_ADDRESS
+    ? getToken2022Decoder().decode(account.data).amount
+    : getLegacyTokenDecoder().decode(account.data).amount;
 }
 
 export async function ensureConfidentialAccount(
   session: Session,
   onProgress: Progress,
 ): Promise<{ address: Address; created: boolean }> {
-  const { wrappedMint } = addresses(session.manifest);
+  const { wrappedMint } = addresses(session);
   const keys = session.keys ?? (await unlockSession(session));
   const [ata] = await findAssociatedTokenPda({
     owner: session.owner,
@@ -259,29 +293,18 @@ export async function convert(
   amount: bigint,
   onProgress: Progress,
 ): Promise<string[]> {
-  const { wrapperProgram, unwrappedMint, wrappedMint, escrow } = addresses(
-    session.manifest,
-  );
+  const { wrapperProgram, unwrappedMint, wrappedMint, escrow, asset } =
+    addresses(session);
   const signatures: string[] = [];
   const { address: wrappedAta } = await ensureConfidentialAccount(
     session,
     onProgress,
   );
-  const [unwrappedAta] = await findLegacyAta({
-    owner: session.owner,
-    mint: unwrappedMint,
-    tokenProgram: TOKEN_PROGRAM_ADDRESS,
-  });
+  const [unwrappedAta] = await findUnderlyingAta(session);
   onProgress("awaiting-approval", "Approve the wrap transaction");
   signatures.push(
     await sendSingle(session, [
-      getLegacyCreateAta({
-        payer: session.signer,
-        ata: unwrappedAta,
-        owner: session.owner,
-        mint: unwrappedMint,
-        tokenProgram: TOKEN_PROGRAM_ADDRESS,
-      }),
+      createUnderlyingAta(session, unwrappedAta),
       getWrapInstruction(
         wrapperProgram,
         {
@@ -291,7 +314,7 @@ export async function convert(
             wrapperProgram,
             wrappedMint,
           ),
-          unwrappedTokenProgram: TOKEN_PROGRAM_ADDRESS,
+          unwrappedTokenProgram: asset.tokenProgram,
           wrappedTokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
           unwrappedTokenAccount: unwrappedAta,
           unwrappedMint,
@@ -305,7 +328,7 @@ export async function convert(
         mint: wrappedMint,
         authority: session.signer,
         amount,
-        decimals: session.manifest.testUsd.decimals,
+        decimals: asset.decimals,
       }),
     ]),
   );
@@ -327,7 +350,7 @@ export async function checkRecipient(
   if (!isAddress(trimmed)) {
     throw new RecipientNotReadyError("Recipient address is not valid");
   }
-  const { wrappedMint } = addresses(session.manifest);
+  const { wrappedMint } = addresses(session);
   const [ata] = await findAssociatedTokenPda({
     owner: address(trimmed),
     mint: wrappedMint,
@@ -336,7 +359,7 @@ export async function checkRecipient(
   const account = await fetchMaybeToken(session.client.rpc, ata);
   if (!account.exists) {
     throw new RecipientNotReadyError(
-      "Recipient has no Wrapped Test USD account yet",
+      `Recipient has no ${session.selectedAsset.symbol} confidential account yet`,
     );
   }
   const extension = confidentialExtension(account.data);
@@ -359,7 +382,7 @@ export async function send(
   amount: bigint,
   onProgress: Progress,
 ): Promise<string[]> {
-  const { wrappedMint } = addresses(session.manifest);
+  const { wrappedMint } = addresses(session);
   const signatures: string[] = [];
   const { address: source } = await ensureConfidentialAccount(
     session,
@@ -415,9 +438,8 @@ export async function withdraw(
   amount: bigint,
   onProgress: Progress,
 ): Promise<{ signatures: string[]; unwrapped: bigint }> {
-  const { wrapperProgram, unwrappedMint, wrappedMint, escrow } = addresses(
-    session.manifest,
-  );
+  const { wrapperProgram, unwrappedMint, wrappedMint, escrow, asset } =
+    addresses(session);
   const signatures: string[] = [];
   const { address: token } = await ensureConfidentialAccount(
     session,
@@ -458,7 +480,7 @@ export async function withdraw(
         tokenAccount: account.data,
         authority: session.signer,
         amount: needed,
-        decimals: session.manifest.testUsd.decimals,
+        decimals: asset.decimals,
         elgamalKeypair: keys.elgamalKeypair,
         aesKey: keys.aesKey,
       });
@@ -466,21 +488,11 @@ export async function withdraw(
       signatures.push(...(await sendPlan(session, plan)));
     }
   }
-  const [unwrappedAta] = await findLegacyAta({
-    owner: session.owner,
-    mint: unwrappedMint,
-    tokenProgram: TOKEN_PROGRAM_ADDRESS,
-  });
+  const [unwrappedAta] = await findUnderlyingAta(session);
   onProgress("awaiting-approval", "Approve the unwrap transaction");
   signatures.push(
     await sendSingle(session, [
-      getLegacyCreateAta({
-        payer: session.signer,
-        ata: unwrappedAta,
-        owner: session.owner,
-        mint: unwrappedMint,
-        tokenProgram: TOKEN_PROGRAM_ADDRESS,
-      }),
+      createUnderlyingAta(session, unwrappedAta),
       getUnwrapInstruction(
         wrapperProgram,
         {
@@ -492,7 +504,7 @@ export async function withdraw(
           ),
           unwrappedMint,
           wrappedTokenProgram: TOKEN_2022_PROGRAM_ADDRESS,
-          unwrappedTokenProgram: TOKEN_PROGRAM_ADDRESS,
+          unwrappedTokenProgram: asset.tokenProgram,
           wrappedTokenAccount: token,
           wrappedMint,
           transferAuthority: session.signer,
@@ -501,26 +513,33 @@ export async function withdraw(
       ),
     ]),
   );
-  onProgress("confirmed", "Withdrawn to Test USD", signatures.at(-1));
+  onProgress(
+    "confirmed",
+    `Withdrawn to ${session.selectedAsset.symbol}`,
+    signatures.at(-1),
+  );
   return { signatures, unwrapped: amount };
 }
 
-export async function requestFunds(target: string): Promise<{
+export async function requestFunds(
+  target: string,
+  symbol: string,
+): Promise<{
   funded: string;
-  testUsdAccount: string;
+  tokenAccount: string;
   signatures: string[];
 }> {
   const response = await fetch("/api/local-fund", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ address: target }),
+    body: JSON.stringify({ address: target, symbol }),
   });
   if (response.status === 404) {
-    throw new Error("Test funding needs the local dev server");
+    throw new Error("Local funding needs the dev server");
   }
   const body = (await response.json()) as {
     funded?: string;
-    testUsdAccount?: string;
+    tokenAccount?: string;
     signatures?: string[];
     error?: string;
   };
@@ -529,7 +548,7 @@ export async function requestFunds(target: string): Promise<{
   }
   return {
     funded: body.funded ?? target,
-    testUsdAccount: body.testUsdAccount ?? "",
+    tokenAccount: body.tokenAccount ?? "",
     signatures: body.signatures ?? [],
   };
 }

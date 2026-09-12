@@ -6,5 +6,5 @@
     "program/src/lib.rs: changed declared program ID for local deployment"
   ],
   "programId": "GxEQHbmE777LzkJjLX2EV7t1n37bZq1gD47gC8Xp9i9m",
-  "auditCoverage": "Not claiming audit coverage for local build; see docs/evidence.md."
+  "auditCoverage": "Not claiming audit coverage for local build."
 }

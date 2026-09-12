@@ -36,8 +36,39 @@ export type { Wallet, WalletAccount };
 
 const LOCAL_CHAIN: IdentifierString = "solana:localnet";
 
+const REQUIRED_WALLET_FEATURES = [
+  StandardConnect,
+  StandardEvents,
+  SolanaSignTransaction,
+  SolanaSignMessage,
+] as const;
+
+function supportsSolanaSigning(wallet: Wallet): boolean {
+  return (
+    wallet.chains.some((chain) => chain.startsWith("solana:")) &&
+    REQUIRED_WALLET_FEATURES.every((feature) => feature in wallet.features) &&
+    (
+      wallet.features[
+        SolanaSignTransaction
+      ] as SolanaSignTransactionFeature[typeof SolanaSignTransaction]
+    ).supportedTransactionVersions.includes(0)
+  );
+}
+
+function getConnectableWallets(wallets: readonly Wallet[]): readonly Wallet[] {
+  const seenProviders = new Set<string>();
+  return wallets.filter((wallet) => {
+    if (!supportsSolanaSigning(wallet)) return false;
+
+    const provider = wallet.name.trim().toLowerCase();
+    if (seenProviders.has(provider)) return false;
+    seenProviders.add(provider);
+    return true;
+  });
+}
+
 export function listWallets(): readonly Wallet[] {
-  return getWallets().get();
+  return getConnectableWallets(getWallets().get());
 }
 
 export function onWalletsChange(listener: () => void): () => void {
@@ -105,10 +136,12 @@ function signTransactionFeature(wallet: Wallet) {
 
 export async function connectWallet(wallet: Wallet): Promise<WalletAccount> {
   const { accounts } = await connectFeature(wallet).connect();
-  const account =
-    accounts.find((candidate) =>
-      candidate.chains.some((chain) => chain.startsWith("solana:")),
-    ) ?? accounts[0];
+  const account = accounts.find(
+    (candidate) =>
+      candidate.chains.some((chain) => chain.startsWith("solana:")) &&
+      candidate.features.includes(SolanaSignTransaction) &&
+      candidate.features.includes(SolanaSignMessage),
+  );
   if (!account) {
     throw new Error("Wallet returned no accounts");
   }

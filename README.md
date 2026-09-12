@@ -1,10 +1,16 @@
-# Confidential stablecoin
+# Confidential stablecoin swap
 
-Local Token-2022 confidential-transfer experiment. Test USD only, no monetary value. All transactions run on local Surfpool.
+Convert USDC, USDT, and CASH between public balances and confidential wrappers on local Surfpool. The setup uses mainnet mint copies and keeps writes on the local RPC.
+
+![Confidential stablecoin swap UI](assets/screenshot.png)
 
 ## Prerequisites
 
-Node.js 24+, pnpm 10, Rust, Solana CLI with `cargo build-sbf`, Surfpool. Used Surfpool 1.5.0 with SBF platform tools v1.57.
+- Node.js 24 or newer
+- pnpm 10.15.0
+- Rust and the Solana CLI 4.1.0, with `cargo build-sbf`
+- Surfpool 1.5.0
+- SBF platform tools v1.57
 
 ## Run locally
 
@@ -16,24 +22,25 @@ pnpm local:build
 pnpm local:start
 ```
 
-Keep Surfpool running. In a second terminal, open the cloned directory:
+Leave Surfpool running at `http://127.0.0.1:8899` (WebSocket `8900`). In a second terminal, run:
 
 ```sh
 pnpm local:setup
 pnpm dev
 ```
 
-App: `http://127.0.0.1:5173`. Surfpool RPC: `http://127.0.0.1:8899` (WS `8900`). `local:setup` creates the Test USD mint, wrapper fixtures, and ignored local keys in `.keys/`.
+Open `http://127.0.0.1:5173`. `local:setup` loads the locally built wrapper and prepares the USDC, USDT, and CASH mint copies. It writes ignored local identities and deployment addresses under `.keys/` and `runtime/local.json`.
 
 ## Use
 
-Connect wallet in the header, then use a test wallet or an installed wallet. Test wallets live in page memory only. Reload or disconnect discards the identity.
+1. Connect a wallet.
+2. Choose USDC, USDT, or CASH from the asset picker beside the amount field.
+3. Use the account dialog's `Get {symbol}` action to top up the selected asset to 100 and add SOL when needed. The wallet dialog also offers a local test wallet funded for the selected asset.
+4. Use Convert to move between public and confidential balances, or Send to transfer confidential funds. These actions submit native Token-2022 confidential-transfer instructions and wrapper transactions.
 
-Convert uses one amount field with a Public → Confidential direction row and flip. The button reads Make confidential or Make public. Send is separate, with recipient address and confidential amount.
+Incoming confidential transfers must be accepted before they become available.
 
-The account modal shows public and confidential balances, copy address, Get test dollars, and Disconnect. Funding replenishes public Test USD to 100 and prepares confidential receiving.
-
-Incoming transfers need Accept. Finish conversion appears when public wrapped tokens remain. Amounts accept up to 6 decimals. Success offers View transaction on Solana Explorer with a custom cluster pointing at the local RPC. Enter opens transaction review.
+The UI shows public and confidential balances, transaction signatures, and confirmation status from the local chain. Amounts use each mint's decimals. Local identities live in page memory and disappear when you reload or disconnect.
 
 ## Checks
 
@@ -43,20 +50,19 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm local:roundtrip
+bash scripts/test-wrapper.sh
 ```
 
-Run the round trip against the running local instance. It converts 100 Test USD, sends 30 between two wallets, redeems both balances, and checks that escrow and supply return to their starting values. Run `bash scripts/test-wrapper.sh` for the upstream Rust tests.
-
-For browser testing, open two tabs and connect a different test wallet in each. Convert in the first, send to the second wallet's address, accept the payment, and convert back to public.
+Run `pnpm local:roundtrip` while Surfpool is running. It exercises wrapping, confidential deposit, native confidential transfer, withdrawal, and unwrapping for USDC, USDT, and CASH, then checks token accounting. `scripts/test-wrapper.sh` runs the vendored wrapper's upstream Rust tests.
 
 ## Limits
 
-Confidential-transfer amounts and confidential balances are encrypted; addresses and timing are public. Wrapping, deposits, withdrawals, and redemptions are public.
-
-Not audited. Upstream wrapper audits do not automatically cover this revision, app, or deployment. The pinned upstream source and local changes are recorded in [vendor provenance](vendor/PROVENANCE.json).
-
-The official proof SDK loads about 2.7 MB of WASM and currently generates proofs on the browser thread. Wallet Standard integration still needs testing with a real extension.
+- The local wrapper build has an exact artifact-to-deployment check recorded in `research/local-deployment.json`; that check does not verify an independently reproducible build.
+- The project has not been audited. Upstream audits do not automatically cover this revision, the application, or the local deployment.
+- Issuer controls remain on the underlying USDC and USDT copies, including freeze controls. CASH retains its underlying permanent-delegate control. The separate wrapper copies retain their freeze controls.
+- Local funding is a development-only cheatcode endpoint bound to the localhost app.
+- Confidential amounts and balances are encrypted. Addresses, timing, wrapping, deposits, withdrawals, and redemptions remain public.
 
 ## License
 
-[MIT](LICENSE). Vendored Token Wrap code retains its [upstream license](vendor/token-wrap/LICENSE).
+[MIT](LICENSE). Vendored Token Wrap code retains its [upstream license](vendor/token-wrap/LICENSE). The bundled Geist font is licensed under the [SIL Open Font License](web/public/fonts/Geist-LICENSE.txt), copyright Vercel in collaboration with basement.studio. Token logo sources are listed in `web/src/lib/token-icons.ts`.

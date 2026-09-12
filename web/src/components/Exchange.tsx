@@ -1,5 +1,11 @@
 import { isAddress } from "@solana/kit";
-import { ArrowLeftRight, ArrowRight, Loader2 } from "lucide-react";
+import {
+  ArrowLeftRight,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Loader2,
+} from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,6 +15,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +25,8 @@ import {
   parseDecimalToBaseUnits,
 } from "@/lib/amounts";
 import type { BalanceView } from "@/lib/engine";
+import type { LocalAsset } from "@/lib/manifest";
+import { getTokenIcon } from "@/lib/token-icons";
 
 export type ExchangeAction = "convert" | "send" | "withdraw";
 
@@ -36,6 +45,9 @@ interface ExchangeProps {
   onActionChange: () => void;
   onApplyPending: () => void;
   onSubmit: (action: ExchangeAction, amount: bigint, recipient: string) => void;
+  asset: LocalAsset | null;
+  assets: readonly LocalAsset[];
+  onAssetChange: (asset: LocalAsset) => void;
 }
 
 type Mode = "convert" | "send";
@@ -55,6 +67,34 @@ function formatBalance(value: bigint | null): string {
   return value === null ? "—" : formatBaseUnits(value);
 }
 
+function TokenMark({
+  asset,
+  large = false,
+}: {
+  asset: LocalAsset;
+  large?: boolean;
+}) {
+  const [failed, setFailed] = useState(false);
+  const token = getTokenIcon(asset.mint);
+  const size = large ? "size-9" : "size-5";
+
+  return failed || !token ? (
+    <span
+      aria-hidden="true"
+      className={`${size} inline-flex shrink-0 items-center justify-center rounded-full bg-muted text-[10px] font-semibold text-muted-foreground`}
+    >
+      {asset.symbol.slice(0, 1)}
+    </span>
+  ) : (
+    <img
+      src={token.imageUrl}
+      alt=""
+      className={`${size} shrink-0 rounded-full object-cover outline-1 outline-black/10`}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 export function Exchange({
   connected,
   balances,
@@ -65,6 +105,9 @@ export function Exchange({
   onActionChange,
   onApplyPending,
   onSubmit,
+  asset,
+  assets,
+  onAssetChange,
 }: ExchangeProps) {
   const [mode, setMode] = useState<Mode>("convert");
   const [reversed, setReversed] = useState(false);
@@ -73,6 +116,7 @@ export function Exchange({
   const [amountTouched, setAmountTouched] = useState(false);
   const [recipientTouched, setRecipientTouched] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [assetPickerOpen, setAssetPickerOpen] = useState(false);
 
   const amountId = useId();
   const amountErrorId = useId();
@@ -190,6 +234,7 @@ export function Exchange({
     : insufficient
       ? "Insufficient balance"
       : displayLabel;
+  const symbol = asset?.symbol ?? "—";
 
   return (
     <section
@@ -276,9 +321,68 @@ export function Exchange({
                 aria-describedby={amountError ? amountErrorId : undefined}
                 className="min-h-14 rounded-md border-0 bg-transparent px-0 text-4xl md:text-4xl font-semibold tabular-nums shadow-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               />
-              <span className="shrink-0 text-sm text-muted-foreground">
-                Test USD
-              </span>
+              <Dialog open={assetPickerOpen} onOpenChange={setAssetPickerOpen}>
+                <DialogTrigger
+                  type="button"
+                  disabled={busy || assets.length === 0}
+                  aria-label={`Select asset, currently ${symbol}`}
+                  className="press inline-flex min-h-11 shrink-0 items-center gap-1 rounded-full px-2.5 text-sm font-semibold text-foreground transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring disabled:pointer-events-none disabled:opacity-50"
+                >
+                  {asset ? <TokenMark asset={asset} /> : null}
+                  {symbol}
+                  <ChevronDown
+                    className="size-4 text-muted-foreground"
+                    aria-hidden="true"
+                  />
+                </DialogTrigger>
+                <DialogContent className="max-w-sm gap-3 p-4 sm:max-w-sm">
+                  <DialogHeader className="gap-1 pr-8">
+                    <DialogTitle>Choose an asset</DialogTitle>
+                    <DialogDescription className="sr-only">
+                      Select the token to use for this exchange.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="grid gap-1">
+                    {assets.map((candidate) => {
+                      const selected = candidate.symbol === asset?.symbol;
+                      return (
+                        <button
+                          key={candidate.symbol}
+                          type="button"
+                          aria-pressed={selected}
+                          className="flex min-h-11 items-center justify-between rounded-lg px-3 text-left text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring aria-pressed:bg-muted"
+                          onClick={() => {
+                            onAssetChange(candidate);
+                            setAssetPickerOpen(false);
+                            setAmountTouched(false);
+                            onActionChange();
+                          }}
+                        >
+                          <span className="flex items-center gap-3">
+                            <TokenMark asset={candidate} large />
+                            <span>
+                              <span className="block">{candidate.symbol}</span>
+                              {getTokenIcon(candidate.mint)?.name &&
+                              getTokenIcon(candidate.mint)?.name !==
+                                candidate.symbol ? (
+                                <span className="block text-xs font-normal text-muted-foreground">
+                                  {getTokenIcon(candidate.mint)?.name}
+                                </span>
+                              ) : null}
+                            </span>
+                          </span>
+                          {selected ? (
+                            <Check
+                              className="size-4 text-foreground"
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </DialogContent>
+              </Dialog>
             </div>
             <div className="flex min-h-11 items-center justify-between gap-3 text-xs text-muted-foreground">
               <span>
@@ -382,7 +486,7 @@ export function Exchange({
             onClick={onApplyPending}
             className="press min-h-11 w-full"
           >
-            Accept {formatBaseUnits(balances.pending ?? 0n)} Test USD
+            Accept {formatBaseUnits(balances.pending ?? 0n)} {symbol}
           </Button>
         </div>
       ) : null}
@@ -390,7 +494,7 @@ export function Exchange({
       {connected && balances.public !== null && balances.public > 0n ? (
         <div className="mt-4 space-y-2">
           <p className="text-sm text-muted-foreground">
-            {formatBaseUnits(balances.public)} Test USD is ready to return to
+            {formatBaseUnits(balances.public)} {symbol} is ready to return to
             your public balance.
           </p>
           <Button
@@ -411,7 +515,7 @@ export function Exchange({
             <DialogTitle>
               {mode === "send" ? "Send" : "Make"}{" "}
               {parsed !== null && parsed > 0n ? formatBaseUnits(parsed) : ""}{" "}
-              Test USD
+              {symbol}
               {mode === "convert"
                 ? ` ${reversed ? "public" : "confidential"}`
                 : ""}

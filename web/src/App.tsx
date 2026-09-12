@@ -30,7 +30,11 @@ import {
   unlockSession,
   withdraw as withdrawTokens,
 } from "@/lib/engine";
-import { type LocalManifest, loadManifest } from "@/lib/manifest";
+import {
+  type LocalAsset,
+  type LocalManifest,
+  loadManifest,
+} from "@/lib/manifest";
 import { createSession, freeSessionKeys, type Session } from "@/lib/session";
 import {
   asKitSigner,
@@ -62,18 +66,13 @@ const EMPTY_BALANCES: BalanceView = {
   confidential: null,
 };
 
-const DONE_MESSAGE: Record<ExchangeAction, (amount: string) => string> = {
-  convert: (amount) => `Converted ${amount} Test USD to confidential`,
-  send: (amount) => `Sent ${amount} Test USD`,
-  withdraw: (amount) => `Converted ${amount} Test USD to public`,
-};
-
 export function App() {
   const [manifest, setManifest] = useState<LocalManifest | null>(null);
   const [manifestError, setManifestError] = useState(false);
   const [connection, setConnection] = useState<Connection>(null);
   const [balances, setBalances] = useState<BalanceView>(EMPTY_BALANCES);
   const [unwrapped, setUnwrapped] = useState<bigint | null>(null);
+  const [selectedAsset, setSelectedAsset] = useState<LocalAsset | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ExchangeStatus | null>(null);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
@@ -84,13 +83,21 @@ export function App() {
     body: string;
   } | null>(null);
   const connectionRef = useRef<Connection>(null);
+  const refreshesRef = useRef(new Map<Session, Promise<void>>());
   useEffect(() => {
     connectionRef.current = connection;
   }, [connection]);
 
   const load = useCallback(async () => {
     try {
-      setManifest(await loadManifest());
+      const next = await loadManifest();
+      setManifest(next);
+      setSelectedAsset((current) =>
+        current && next.assets.some((asset) => asset.symbol === current.symbol)
+          ? (next.assets.find((asset) => asset.symbol === current.symbol) ??
+            next.assets[0])
+          : next.assets[0],
+      );
       setManifestError(false);
     } catch {
       setManifestError(true);
@@ -103,20 +110,39 @@ export function App() {
     return onWalletsChange(() => setWallets(listWallets()));
   }, [load]);
 
-  const refreshBalances = useCallback(async (session: Session) => {
-    try {
-      const [view, testUsd] = await Promise.all([
-        readBalances(session),
-        readUnwrappedBalance(session),
-      ]);
-      if (connectionRef.current?.session !== session) return;
-      setBalances(view);
-      setUnwrapped(testUsd);
-    } catch {
-      if (connectionRef.current?.session !== session) return;
-      setBalances(EMPTY_BALANCES);
-      setUnwrapped(null);
-    }
+  const refreshBalances = useCallback((session: Session) => {
+    const existing = refreshesRef.current.get(session);
+    if (existing) return existing;
+    const run = (async () => {
+      const assetMint = session.selectedAsset.mint;
+      try {
+        const [view, assetBalance] = await Promise.all([
+          readBalances(session),
+          readUnwrappedBalance(session),
+        ]);
+        if (
+          connectionRef.current?.session !== session ||
+          session.selectedAsset.mint !== assetMint
+        )
+          return;
+        setBalances(view);
+        setUnwrapped(assetBalance);
+      } catch {
+        if (
+          connectionRef.current?.session !== session ||
+          session.selectedAsset.mint !== assetMint
+        )
+          return;
+        setBalances(EMPTY_BALANCES);
+        setUnwrapped(null);
+      }
+    })();
+    refreshesRef.current.set(session, run);
+    void run.finally(() => {
+      if (refreshesRef.current.get(session) === run)
+        refreshesRef.current.delete(session);
+    });
+    return run;
   }, []);
 
   useEffect(() => {
@@ -222,13 +248,17 @@ export function App() {
       return;
     }
     setBusy(true);
+    let session: Session | null = null;
     try {
       const signer = await generateKeyPairSigner();
-      const session = createSession(manifest, signer, signer.address);
-      setConnection({ kind: "test", session });
+      const asset = selectedAsset ?? manifest.assets[0];
+      session = createSession(manifest, signer, signer.address, asset);
+      const nextConnection: TestConnection = { kind: "test", session };
+      connectionRef.current = nextConnection;
+      setConnection(nextConnection);
       setWalletDialogOpen(false);
       setStatus({ state: "working", message: "Funding test wallet" });
-      await requestFunds(signer.address.toString());
+      await requestFunds(signer.address.toString(), asset.symbol);
       await unlockSession(session);
       await ensureConfidentialAccount(session, trackProgress);
       await refreshBalances(session);
@@ -239,10 +269,9 @@ export function App() {
         detail: error instanceof Error ? error.message : undefined,
         nextStep: "Check the local network and try again.",
       });
-      if (connectionRef.current) {
-        freeSessionKeys(connectionRef.current.session);
-        setConnection(null);
-      }
+      if (session) freeSessionKeys(session);
+      connectionRef.current = null;
+      setConnection(null);
     } finally {
       setBusy(false);
     }
@@ -259,6 +288,7 @@ export function App() {
         manifest,
         asKitSigner(wallet, account),
         address(account.address),
+        selectedAsset ?? manifest.assets[0],
       );
       const stopWatching = onWalletAccountsChange(wallet, (accounts) => {
         const current = connectionRef.current;
@@ -282,6 +312,47 @@ export function App() {
       notifyError("Wallet connection failed.", {
         detail: error instanceof Error ? error.message : undefined,
         nextStep: "Try again or use a local test wallet.",
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function selectAsset(asset: LocalAsset): Promise<void> {
+    if (busy || selectedAsset?.mint === asset.mint) return;
+    setSelectedAsset(asset);
+    setBalances(EMPTY_BALANCES);
+    setUnwrapped(null);
+    setStatus(null);
+    const current = connectionRef.current;
+    if (!current) return;
+    setBusy(true);
+    const previous = current.session;
+    const nextSession = createSession(
+      previous.manifest,
+      previous.signer,
+      previous.owner,
+      asset,
+    );
+    const nextConnection =
+      current.kind === "injected"
+        ? { ...current, session: nextSession }
+        : { kind: "test" as const, session: nextSession };
+    connectionRef.current = nextConnection;
+    setConnection(nextConnection);
+    try {
+      await unlockSession(nextSession);
+      await refreshBalances(nextSession);
+      await refreshesRef.current.get(previous);
+      freeSessionKeys(previous);
+    } catch (error) {
+      freeSessionKeys(nextSession);
+      connectionRef.current = current;
+      setConnection(current);
+      setSelectedAsset(previous.selectedAsset);
+      notifyError("Could not switch asset.", {
+        detail: error instanceof Error ? error.message : undefined,
+        nextStep: "Try selecting the asset again.",
       });
     } finally {
       setBusy(false);
@@ -314,7 +385,12 @@ export function App() {
         const result = await withdrawTokens(session, amount, trackProgress);
         signatures = result.signatures;
       }
-      const message = DONE_MESSAGE[action](formatBaseUnits(amount));
+      const message =
+        action === "send"
+          ? `Sent ${formatBaseUnits(amount)} ${session.selectedAsset.symbol}`
+          : action === "convert"
+            ? `Made ${formatBaseUnits(amount)} ${session.selectedAsset.symbol} confidential`
+            : `Made ${formatBaseUnits(amount)} ${session.selectedAsset.symbol} public`;
       const signature = signatures.at(-1);
       setStatus({
         state: "done",
@@ -378,10 +454,15 @@ export function App() {
     }
     setBusy(true);
     try {
-      await requestFunds(connection.session.owner.toString());
+      await requestFunds(
+        connection.session.owner.toString(),
+        connection.session.selectedAsset.symbol,
+      );
       await ensureConfidentialAccount(connection.session, trackProgress);
       setStatus(null);
-      notifySuccess("Test dollars added.");
+      notifySuccess(
+        `${connection.session.selectedAsset.symbol} balance refreshed.`,
+      );
       await refreshBalances(connection.session);
     } catch (error) {
       setStatus(null);
@@ -447,6 +528,9 @@ export function App() {
           unwrapped={unwrapped}
           busy={busy}
           status={status}
+          asset={selectedAsset}
+          assets={manifest?.assets ?? []}
+          onAssetChange={(asset) => void selectAsset(asset)}
           onActionChange={() => setStatus(null)}
           onConnect={() => setWalletDialogOpen(true)}
           onApplyPending={() => void applyPending()}
@@ -465,6 +549,7 @@ export function App() {
             busy={busy}
             onFunds={() => void funds()}
             onDisconnect={disconnect}
+            symbol={selectedAsset?.symbol ?? "asset"}
           />
         ) : null}
       </main>

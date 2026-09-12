@@ -27,7 +27,7 @@ import {
   deriveAeKeyForOwnerMint,
   deriveElGamalKeypairForOwnerMint,
 } from "@solana-program/token-2022/confidential";
-import type { LocalManifest } from "@/lib/manifest";
+import type { LocalAsset, LocalManifest } from "@/lib/manifest";
 
 export interface SessionKeys {
   elgamalKeypair: ElGamalKeypair;
@@ -39,6 +39,7 @@ export type FullSigner = TransactionPartialSigner & MessagePartialSigner;
 
 export interface Session {
   manifest: LocalManifest;
+  selectedAsset: LocalAsset;
   client: SessionClient;
   signer: FullSigner;
   owner: Address;
@@ -66,14 +67,22 @@ export function createSession(
   manifest: LocalManifest,
   signer: FullSigner,
   owner: Address,
+  selectedAsset: LocalAsset = manifest.assets[0],
 ): Session {
   return {
     manifest,
+    selectedAsset,
     client: createSessionClient(manifest, signer),
     signer,
     owner,
     keys: null,
   };
+}
+
+export function switchSessionAsset(session: Session, asset: LocalAsset): void {
+  if (session.selectedAsset.mint === asset.mint) return;
+  freeSessionKeys(session);
+  session.selectedAsset = asset;
 }
 
 export async function deriveKeys(
