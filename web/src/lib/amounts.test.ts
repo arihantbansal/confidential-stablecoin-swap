@@ -10,6 +10,8 @@ describe("token amounts", () => {
     expect(parseDecimalToBaseUnits("1")).toBe(1_000_000n);
     expect(parseDecimalToBaseUnits("0.000001")).toBe(1n);
     expect(parseDecimalToBaseUnits("30.5")).toBe(30_500_000n);
+    expect(parseDecimalToBaseUnits(".5")).toBe(500_000n);
+    expect(parseDecimalToBaseUnits("1.")).toBe(1_000_000n);
   });
 
   it("keeps large values exact without Number conversion", () => {

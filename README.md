@@ -2,7 +2,7 @@
 
 A local Surfpool experiment that wraps Test USD into a Token-2022 token and uses native confidential transfers. Test tokens have no monetary value.
 
-The browser app and two-user confidential round trip run locally. Browser testing covered conversion, a confidential payment between two independent test wallets, accepting the payment, and both redemptions. This application is not audited or formally verified.
+The app and a two-user confidential round trip run locally. An earlier browser build covered conversion, a confidential payment between two independent test wallets, receipt acceptance, and both redemptions. The current two-panel UI has also completed conversion in both directions; its two-wallet send check remains outstanding.
 
 ## Run locally
 
@@ -21,11 +21,13 @@ pnpm local:setup
 pnpm dev
 ```
 
-Surfpool listens on `127.0.0.1:8899`. Its mainnet setting supplies upstream accounts on demand; all writes and test transactions execute locally. The fixture loader installs our compiled wrapper at its fixed local address without distributing a deployment secret.
+Surfpool listens on `127.0.0.1:8899`. Its mainnet setting supplies upstream accounts on demand; all writes and test transactions execute locally. The fixture loader installs the compiled wrapper at its fixed local address without distributing a deployment secret.
 
-Creating a test wallet adds 100 Test USD and enables confidential receiving. Use Convert, Send, and Withdraw; Account contains the address, test funding, and encrypted recovery export. Wallet keys live in memory, so export a recovery file before closing the tab if you want to keep that test identity.
+Connect wallet in the header opens a chooser with detected wallets and a local test wallet option. Test wallets live in page memory. Reloading or disconnecting discards the identity. The connected header address opens the account dialog with the address, copy, Get test dollars, and disconnect. Funding replenishes the public Test USD balance to 100 and prepares the account for confidential receiving.
 
-Transaction outcomes use Sonner notifications, with signatures and errors available through Details. Field errors appear after leaving a field or submitting; editing clears them. Enter opens the transaction review. Motion respects reduced-motion preferences.
+Convert has Public and Confidential Test USD panels with a flip button. Flipping to Confidential to Public still runs a withdraw internally. Send takes a recipient address and a confidential amount. Amounts accept up to 6 decimals, including `.5` and `1.` forms. Each panel labels its public or confidential balance. An Accept button shows incoming funds that are still pending. A Finish conversion button appears when public wrapped tokens remain after an interrupted reverse conversion.
+
+Success toasts offer View transaction, which opens Solana Explorer with `cluster=custom` and `customUrl=http://127.0.0.1:8899`. Errors offer Details with a cause and next step. Enter opens the transaction review.
 
 ## What is private
 
@@ -44,7 +46,7 @@ pnpm local:roundtrip
 ./scripts/test-wrapper.sh
 ```
 
-The upstream wrapper suite passed 114 tests with one ignored. The local native proof round trip wraps 100, sends 30 from A to B, redeems 30 and 70, and checks that escrow and wrapped supply return to their starting values. Runtime transaction signatures and assertions are written to `runtime/results.json`; keys stay in ignored `.keys/` files.
+The upstream wrapper suite passed 114 tests with one ignored. The local native proof round trip wraps 100, sends 30 from A to B, redeems 30 and 70, and checks that escrow and wrapped supply return to their starting values. Runtime transaction signatures and assertions are written to `runtime/results.json`; keys stay in ignored `.keys/` files. Finish conversion and injected-wallet acceptance remain open. See the testing plan for the current checklist.
 
 The compiled wrapper was downloaded from the local deployment and matched byte for byte. That establishes this local artifact match, not independent reproducibility or a security audit. See `research/local-deployment.json` and `research/wrapper-tests.json`.
 
@@ -52,6 +54,6 @@ Browser proofs use the official WASM SDK. The current build loads about 2.7 MB o
 
 ## Trust boundaries
 
-The vendored wrapper comes from the official Solana program repository. Upstream audits cover named revisions, not automatically our pinned revision or application. The initial normal local deployment retains an upgrade authority. Immutability has not been established. The browser integration, proof SDK, recovery handling, and dependency chain need their own review. Do not describe this experiment as audited, formally verified, or production ready.
+The vendored wrapper comes from the official Solana program repository. Upstream audits cover named revisions, not automatically our pinned revision or application. The initial normal local deployment retains an upgrade authority. Immutability has not been established. The application is not audited or formally verified.
 
 Read [the build plan](docs/build-plan.md) for architecture and remaining acceptance criteria, [the evidence](docs/evidence.md) for upstream findings, and [vendor provenance](vendor/PROVENANCE.json) for the pinned source and local program-ID change.

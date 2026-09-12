@@ -1,7 +1,11 @@
-import { address, type KeyPairSigner } from "@solana/kit";
+import {
+  address,
+  generateKeyPairSigner,
+  type KeyPairSigner,
+} from "@solana/kit";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
-import { AccountSection, WalletDialog } from "@/components/Account";
+import { AccountDialog, WalletDialog } from "@/components/Account";
 import {
   Exchange,
   type ExchangeAction,
@@ -30,13 +34,6 @@ import {
   unlockSession,
   withdraw as withdrawTokens,
 } from "@/lib/engine";
-import {
-  createTestWallet,
-  decryptRecoveryFile,
-  encryptRecoveryFile,
-  exportSecretBytes,
-  importTestWallet,
-} from "@/lib/keys";
 import { type LocalManifest, loadManifest } from "@/lib/manifest";
 import { createSession, freeSessionKeys, type Session } from "@/lib/session";
 import {
@@ -71,9 +68,9 @@ const EMPTY_BALANCES: BalanceView = {
 };
 
 const DONE_MESSAGE: Record<ExchangeAction, (amount: string) => string> = {
-  convert: (amount) => `Converted ${amount} Test USD`,
-  send: (amount) => `Sent ${amount} Wrapped Test USD`,
-  withdraw: (amount) => `Withdrew ${amount} Test USD`,
+  convert: (amount) => `Converted ${amount} Test USD to confidential`,
+  send: (amount) => `Sent ${amount} Test USD`,
+  withdraw: (amount) => `Converted ${amount} Test USD to public`,
 };
 
 export function App() {
@@ -85,8 +82,8 @@ export function App() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<ExchangeStatus | null>(null);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [wallets, setWallets] = useState<readonly Wallet[]>([]);
-  const [importError, setImportError] = useState<string | null>(null);
   const [detail, setDetail] = useState<{
     title: string;
     body: string;
@@ -157,12 +154,16 @@ export function App() {
   const notifySuccess = useCallback(
     (message: string, detailValue?: string): void => {
       toast.success(message, {
-        action: detailValue
-          ? {
-              label: "Details",
-              onClick: () => setDetail({ title: message, body: detailValue }),
-            }
-          : undefined,
+        action: detailValue ? (
+          <a
+            href={`https://explorer.solana.com/tx/${detailValue}?${new URLSearchParams({ cluster: "custom", customUrl: "http://127.0.0.1:8899" })}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="ml-auto inline-flex min-h-11 shrink-0 items-center rounded-md px-3 text-xs font-medium underline underline-offset-4"
+          >
+            View transaction
+          </a>
+        ) : undefined,
       });
     },
     [],
@@ -202,6 +203,7 @@ export function App() {
       freeSessionKeys(current.session);
     }
     setConnection(null);
+    setAccountOpen(false);
     setBalances(EMPTY_BALANCES);
     setUnwrapped(null);
     setStatus(null);
@@ -225,9 +227,8 @@ export function App() {
       return;
     }
     setBusy(true);
-    setImportError(null);
     try {
-      const signer = await createTestWallet();
+      const signer = await generateKeyPairSigner();
       const session = createSession(manifest, signer, signer.address);
       setConnection({ kind: "test", signer, session });
       setWalletDialogOpen(false);
@@ -288,28 +289,6 @@ export function App() {
         nextStep: "Try again or use a local test wallet.",
       });
     } finally {
-      setBusy(false);
-    }
-  }
-
-  async function importRecovery(text: string, password: string): Promise<void> {
-    if (!manifest || busy) {
-      return;
-    }
-    setBusy(true);
-    setImportError(null);
-    let secret: Uint8Array | null = null;
-    try {
-      secret = await decryptRecoveryFile(text, password);
-      const signer = await importTestWallet(secret);
-      const session = createSession(manifest, signer, signer.address);
-      setConnection({ kind: "test", signer, session });
-      setWalletDialogOpen(false);
-      await attachSession(session);
-    } catch (error) {
-      setImportError(error instanceof Error ? error.message : "Import failed.");
-    } finally {
-      secret?.fill(0);
       setBusy(false);
     }
   }
@@ -422,49 +401,25 @@ export function App() {
     }
   }
 
-  async function exportRecovery(password: string): Promise<void> {
-    if (connection?.kind !== "test" || busy) {
-      return;
-    }
-    setBusy(true);
-    let secret: Uint8Array | null = null;
-    try {
-      secret = await exportSecretBytes(connection.signer);
-      const text = await encryptRecoveryFile(secret, password);
-      const blob = new Blob([text], { type: "application/json" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "test-wallet-recovery.json";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
-      notifySuccess("Recovery file download started.");
-    } catch (error) {
-      notifyError("Export failed.", {
-        detail: error instanceof Error ? error.message : undefined,
-        nextStep: "Try again with a valid password.",
-      });
-    } finally {
-      secret?.fill(0);
-      setBusy(false);
-    }
-  }
-
   const connectedAddress = connection?.session.owner.toString() ?? null;
 
   return (
     <div className="min-h-dvh">
       <header className="border-b">
-        <div className="mx-auto flex w-full max-w-sm items-center justify-between gap-3 px-4 py-3">
+        <div className="mx-auto flex w-full max-w-[452px] items-center justify-between gap-3 px-4 py-3">
           <p className="text-sm font-semibold tracking-tight">
             Confidential Dollars
           </p>
           {connection ? (
-            <p className="max-w-28 truncate font-mono text-xs text-muted-foreground">
-              {connectedAddress}
-            </p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setAccountOpen(true)}
+              aria-label="Open wallet account"
+              className="press min-h-11 font-mono text-xs"
+            >
+              {connectedAddress?.slice(0, 4)}…{connectedAddress?.slice(-4)}
+            </Button>
           ) : (
             <Button
               type="button"
@@ -473,13 +428,13 @@ export function App() {
               onClick={() => setWalletDialogOpen(true)}
               className="press min-h-11"
             >
-              Connect
+              Connect wallet
             </Button>
           )}
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-sm space-y-3 px-4 py-6">
+      <main className="mx-auto w-full max-w-[452px] space-y-3 px-4 py-6">
         {manifestError ? (
           <p className="rounded-xl border px-5 py-4 text-sm">
             Local network unavailable.{" "}
@@ -500,7 +455,7 @@ export function App() {
           busy={busy}
           status={status}
           onActionChange={() => setStatus(null)}
-          onCreateWallet={() => void startTestWallet()}
+          onConnect={() => setWalletDialogOpen(true)}
           onApplyPending={() => void applyPending()}
           onSubmit={(action, amount, recipient) => {
             void submit(action, amount, recipient);
@@ -508,19 +463,15 @@ export function App() {
         />
 
         {connection ? (
-          <AccountSection
+          <AccountDialog
+            open={accountOpen}
+            onOpenChange={setAccountOpen}
             address={connectedAddress ?? ""}
-            isTestWallet={connection.kind === "test"}
             busy={busy}
             onFunds={() => void funds()}
-            onExport={(password) => void exportRecovery(password)}
             onDisconnect={disconnect}
           />
         ) : null}
-
-        <footer className="pt-1 text-center text-xs text-muted-foreground">
-          Local test tokens · no value
-        </footer>
       </main>
 
       <WalletDialog
@@ -528,10 +479,8 @@ export function App() {
         onOpenChange={setWalletDialogOpen}
         wallets={wallets}
         busy={busy}
-        importError={importError}
         onPickWallet={(wallet) => void pickWallet(wallet)}
         onNewTestWallet={() => void startTestWallet()}
-        onImport={(text, password) => void importRecovery(text, password)}
       />
 
       <Toaster

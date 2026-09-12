@@ -1,25 +1,8 @@
-/**
- * Pure decimal <-> base-unit conversions for the six-decimal test tokens.
- *
- * Everything here is intentionally free of Number arithmetic: amounts are
- * parsed and formatted with bigint so large values stay exact. Invalid input
- * is reported as `null` rather than throwing, so form fields can render
- * inline accessible errors.
- */
-
-/** Decimals used by Test USD and Wrapped Test USD. */
+// Keep token amounts exact by parsing decimal strings directly to bigint.
 export const TOKEN_DECIMALS = 6;
 
-/** Largest accepted fraction length; kept separate so tests pin the rule. */
 const MAX_INPUT_LENGTH = 64;
 
-/**
- * Parse a user-typed decimal string into integer base units.
- *
- * Returns `null` for empty input, negative values, excess precision, or any
- * shape that is not exactly `<digits>[.<digits>]`. No custody, network, or
- * cryptographic behavior lives here.
- */
 export function parseDecimalToBaseUnits(
   input: string,
   decimals: number = TOKEN_DECIMALS,
@@ -28,7 +11,7 @@ export function parseDecimalToBaseUnits(
   if (text === "" || text.length > MAX_INPUT_LENGTH) {
     return null;
   }
-  if (!/^\d+(\.\d+)?$/.test(text)) {
+  if (!/^(?:\d+\.?\d*|\.\d+)$/.test(text)) {
     return null;
   }
   const dot = text.indexOf(".");
@@ -39,17 +22,9 @@ export function parseDecimalToBaseUnits(
   }
   const padded = fraction.padEnd(decimals, "0");
   const digits = `${whole}${padded}`.replace(/^0+(?=\d)/, "");
-  try {
-    return BigInt(digits === "" ? "0" : digits);
-  } catch {
-    return null;
-  }
+  return BigInt(digits);
 }
 
-/**
- * Explain why an amount string is invalid, or `null` when it parses.
- * Used for inline form errors announced to screen readers.
- */
 export function getAmountError(
   input: string,
   decimals: number = TOKEN_DECIMALS,
@@ -61,7 +36,7 @@ export function getAmountError(
   if (/^-/.test(text)) {
     return "Amount must not be negative.";
   }
-  if (!/^\d+(\.\d+)?$/.test(text)) {
+  if (!/^(?:\d+\.?\d*|\.\d+)$/.test(text)) {
     return "Use digits with at most one decimal point.";
   }
   const fraction = text.includes(".") ? (text.split(".")[1] ?? "") : "";
@@ -78,10 +53,6 @@ export function getAmountError(
   return null;
 }
 
-/**
- * Format integer base units as a decimal string without precision loss.
- * Trailing fractional zeros are trimmed, so 1_000_000n renders as "1".
- */
 export function formatBaseUnits(
   value: bigint,
   decimals: number = TOKEN_DECIMALS,

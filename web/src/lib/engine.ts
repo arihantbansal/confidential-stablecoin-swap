@@ -114,9 +114,7 @@ export async function unlockSession(session: Session): Promise<SessionKeys> {
         expected.length !== actual.length ||
         !expected.every((byte, index) => byte === actual[index])
       ) {
-        throw new Error(
-          "Recovered keys do not match the onchain account. Wrong recovery file.",
-        );
+        throw new Error("Wallet keys do not match this confidential account.");
       }
     }
   }
