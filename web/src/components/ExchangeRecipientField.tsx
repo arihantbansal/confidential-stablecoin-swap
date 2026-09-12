@@ -10,7 +10,6 @@ interface ExchangeRecipientFieldProps {
   busy: boolean;
   inputRef: Ref<HTMLInputElement>;
   onChange: (value: string) => void;
-  onBlur: (value: string) => void;
 }
 
 export function ExchangeRecipientField({
@@ -21,7 +20,6 @@ export function ExchangeRecipientField({
   busy,
   inputRef,
   onChange,
-  onBlur,
 }: ExchangeRecipientFieldProps) {
   return (
     <div className="space-y-2">
@@ -37,7 +35,6 @@ export function ExchangeRecipientField({
         value={value}
         disabled={busy}
         onChange={(event) => onChange(event.target.value)}
-        onBlur={(event) => onBlur(event.target.value)}
         aria-invalid={error ? true : undefined}
         aria-describedby={error ? errorId : undefined}
         className="min-h-11 font-mono text-base md:text-sm"

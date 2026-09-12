@@ -126,7 +126,6 @@ export function Exchange({
                   />
                 }
                 onAmountChange={form.handleAmountChange}
-                onAmountBlur={form.handleAmountBlur}
                 onApplyMax={form.applyMax}
               />
               {form.mode === "send" ? (
@@ -138,7 +137,6 @@ export function Exchange({
                   busy={busy}
                   inputRef={form.recipientRef}
                   onChange={form.handleRecipientChange}
-                  onBlur={form.handleRecipientBlur}
                 />
               ) : null}
             </div>

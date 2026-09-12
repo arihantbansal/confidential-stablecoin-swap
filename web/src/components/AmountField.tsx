@@ -15,7 +15,6 @@ interface AmountFieldProps {
   inputRef: Ref<HTMLInputElement>;
   assetControl: ReactNode;
   onAmountChange: (value: string) => void;
-  onAmountBlur: () => void;
   onApplyMax: () => void;
 }
 
@@ -31,7 +30,6 @@ export function AmountField({
   inputRef,
   assetControl,
   onAmountChange,
-  onAmountBlur,
   onApplyMax,
 }: AmountFieldProps) {
   return (
@@ -49,7 +47,6 @@ export function AmountField({
           value={amount}
           disabled={busy}
           onChange={(event) => onAmountChange(event.target.value)}
-          onBlur={onAmountBlur}
           aria-invalid={amountError ? true : undefined}
           aria-describedby={amountError ? amountErrorId : undefined}
           className="min-h-14 rounded-md border-0 bg-transparent px-0 text-4xl md:text-4xl font-semibold tabular-nums shadow-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"

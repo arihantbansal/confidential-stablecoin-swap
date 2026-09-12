@@ -109,17 +109,9 @@ export function useExchangeForm({
     setAmountTouched(false);
   }
 
-  function handleAmountBlur() {
-    setAmountTouched(true);
-  }
-
   function handleRecipientChange(value: string) {
     setRecipient(value);
     setRecipientTouched(false);
-  }
-
-  function handleRecipientBlur(value: string) {
-    if (value.trim() !== "") setRecipientTouched(true);
   }
 
   async function confirm() {
@@ -188,9 +180,7 @@ export function useExchangeForm({
     applyMax,
     handleSubmit,
     handleAmountChange,
-    handleAmountBlur,
     handleRecipientChange,
-    handleRecipientBlur,
     confirm,
     finishConversion,
     switchMode,

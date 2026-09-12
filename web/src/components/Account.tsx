@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Skeleton } from "@/components/ui/skeleton";
 import { formatBaseUnits } from "@/lib/amounts";
 import type { Wallet } from "@/lib/wallets";
 
@@ -102,7 +103,6 @@ interface AccountDialogProps {
 }
 
 function unknownBalanceLabel(balanceState?: BalanceState): string {
-  if (balanceState === "loading") return "Loading…";
   if (balanceState === "locked") return "Locked";
   if (balanceState === "error") return "Unavailable";
   return "—";
@@ -143,7 +143,7 @@ export function AccountDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="flex items-start gap-2">
+          <div className="flex items-center gap-3">
             <p className="min-w-0 flex-1 break-all font-mono text-xs text-muted-foreground">
               {address}
             </p>
@@ -161,24 +161,38 @@ export function AccountDialog({
             </Button>
           </div>
           <dl className="space-y-3 rounded-lg bg-muted/60 p-4 text-sm">
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Public</dt>
-              <dd className="tabular-nums">
-                {publicBalance === null
-                  ? unknownBalanceLabel(balanceState)
-                  : formatBaseUnits(publicBalance, decimals)}{" "}
-                {symbol}
-              </dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Confidential</dt>
-              <dd className="tabular-nums">
-                {confidentialBalance === null
-                  ? unknownBalanceLabel(balanceState)
-                  : formatBaseUnits(confidentialBalance, decimals)}{" "}
-                {symbol}
-              </dd>
-            </div>
+            {(
+              [
+                ["Public", publicBalance],
+                ["Confidential", confidentialBalance],
+              ] as const
+            ).map(([label, balance]) => {
+              const loading = balance === null && balanceState === "loading";
+              return (
+                <div key={label} className="flex justify-between gap-4">
+                  <dt className="text-muted-foreground">{label}</dt>
+                  <dd
+                    className="flex min-h-5 items-center gap-1.5 tabular-nums"
+                    aria-busy={loading}
+                  >
+                    {loading ? (
+                      <>
+                        <Skeleton
+                          aria-hidden="true"
+                          className="h-4 w-16 bg-foreground/10"
+                        />
+                        <span className="sr-only">Loading balance</span>
+                      </>
+                    ) : balance === null ? (
+                      unknownBalanceLabel(balanceState)
+                    ) : (
+                      formatBaseUnits(balance, decimals)
+                    )}
+                    <span>{symbol}</span>
+                  </dd>
+                </div>
+              );
+            })}
           </dl>
           <Button
             type="button"
