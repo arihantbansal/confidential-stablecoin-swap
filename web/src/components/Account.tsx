@@ -144,8 +144,14 @@ export function AccountDialog({
         </DialogHeader>
         <div className="space-y-4">
           <div className="flex items-center gap-3">
-            <p className="min-w-0 flex-1 break-all font-mono text-xs text-muted-foreground">
-              {address}
+            <p
+              title={address}
+              className="min-w-0 flex-1 font-mono text-xs text-muted-foreground"
+            >
+              <span aria-hidden="true">
+                {address.slice(0, 6)}…{address.slice(-6)}
+              </span>
+              <span className="sr-only">{address}</span>
             </p>
             <Button
               type="button"
