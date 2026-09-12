@@ -8,6 +8,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { formatBaseUnits } from "@/lib/amounts";
 import type { Wallet } from "@/lib/wallets";
 
 interface WalletDialogProps {
@@ -64,6 +65,8 @@ export function WalletDialog({
 }
 
 interface AccountDialogProps {
+  publicBalance: bigint | null;
+  confidentialBalance: bigint | null;
   address: string;
   busy: boolean;
   open: boolean;
@@ -73,6 +76,8 @@ interface AccountDialogProps {
 }
 
 export function AccountDialog({
+  publicBalance,
+  confidentialBalance,
   address,
   busy,
   open,
@@ -118,6 +123,24 @@ export function AccountDialog({
               Copy
             </Button>
           </div>
+          <dl className="space-y-3 rounded-lg bg-muted/60 p-4 text-sm">
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Public</dt>
+              <dd className="tabular-nums">
+                {publicBalance === null ? "—" : formatBaseUnits(publicBalance)}{" "}
+                Test USD
+              </dd>
+            </div>
+            <div className="flex justify-between gap-4">
+              <dt className="text-muted-foreground">Confidential</dt>
+              <dd className="tabular-nums">
+                {confidentialBalance === null
+                  ? "—"
+                  : formatBaseUnits(confidentialBalance)}{" "}
+                Test USD
+              </dd>
+            </div>
+          </dl>
           <Button
             type="button"
             variant="outline"

@@ -67,12 +67,6 @@ export function onWalletAccountsChange(
   });
 }
 
-export function solanaAccounts(wallet: Wallet): readonly WalletAccount[] {
-  return wallet.accounts.filter((account) =>
-    account.chains.some((chain) => chain.startsWith("solana:")),
-  );
-}
-
 function connectFeature(wallet: Wallet) {
   if (!(StandardConnect in wallet.features)) {
     throw new Error("Wallet does not support standard:connect");

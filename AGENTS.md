@@ -15,11 +15,11 @@
 ## Interface and writing
 
 - Use themed shadcn/ui components and semantic tokens. Preserve keyboard behavior and visible focus.
-- Name actions consistently: Convert, Send, Withdraw. Explain failures with a cause and a next step.
+- Use Convert and Send as modes. Label conversion actions Make confidential and Make public. Explain failures with a cause and a next step.
 - Write plain, specific copy. Remove slogans, filler, decorative status claims, and comments that merely repeat code.
-- Show the local test-token label. Security claims must link to evidence for the exact scope and version.
+- Keep test-token scope in the README. Security claims must link to evidence for the exact scope and version.
 - Show real balances, signatures, and statuses. Keep simulations explicitly separate from transaction results.
 
 ## References
 
-Read `docs/build-plan.md` when changing the transaction lifecycle or recovery design. Read `docs/evidence.md` when making audit or deployment-verification claims. The README describes the runnable state; the plan may include unfinished work.
+Use the README for setup, usage, and limitations. Check `vendor/PROVENANCE.json` and the recorded results in `research/` before making audit or deployment-verification claims.

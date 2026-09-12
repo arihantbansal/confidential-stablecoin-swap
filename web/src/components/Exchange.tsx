@@ -1,5 +1,5 @@
 import { isAddress } from "@solana/kit";
-import { ArrowUpDown, Loader2 } from "lucide-react";
+import { ArrowLeftRight, ArrowRight, Loader2 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,9 +22,8 @@ import type { BalanceView } from "@/lib/engine";
 export type ExchangeAction = "convert" | "send" | "withdraw";
 
 export interface ExchangeStatus {
-  state: "working" | "done" | "error";
+  state: "working" | "done";
   message: string;
-  detail?: string;
 }
 
 interface ExchangeProps {
@@ -77,7 +76,6 @@ export function Exchange({
 
   const amountId = useId();
   const amountErrorId = useId();
-  const outputId = useId();
   const recipientId = useId();
   const recipientErrorId = useId();
   const amountRef = useRef<HTMLInputElement>(null);
@@ -93,7 +91,8 @@ export function Exchange({
 
   const internalAction: ExchangeAction =
     mode === "send" ? "send" : reversed ? "withdraw" : "convert";
-  const displayLabel = mode === "send" ? "Send" : "Convert";
+  const displayLabel =
+    mode === "send" ? "Send" : reversed ? "Make public" : "Make confidential";
 
   const parsed = parseDecimalToBaseUnits(amount);
   const amountErrorRaw = getAmountError(amount);
@@ -106,8 +105,6 @@ export function Exchange({
       : reversed
         ? balances.confidential
         : unwrapped;
-  const targetBalance =
-    mode === "send" ? null : reversed ? unwrapped : balances.confidential;
   const sourceKind =
     mode === "send" ? "Confidential" : reversed ? "Confidential" : "Public";
   const targetKind = reversed ? "Public" : "Confidential";
@@ -130,9 +127,6 @@ export function Exchange({
     amountErrorRaw === null &&
     !insufficient &&
     (mode !== "send" || isRecipient(recipient));
-
-  const outputValue =
-    parsed !== null && parsed > 0n ? formatBaseUnits(parsed) : "";
 
   const showApplyPending =
     connected && balances.pending !== null && balances.pending > 0n && !busy;
@@ -228,28 +222,42 @@ export function Exchange({
 
       <form onSubmit={handleSubmit}>
         <div className="mt-4 space-y-2">
-          <div className="rounded-lg border bg-muted/60 p-4">
-            <div className="flex min-h-11 items-center justify-between gap-3">
-              <Label
-                htmlFor={amountId}
-                className="text-sm text-muted-foreground"
+          {mode === "convert" ? (
+            <fieldset
+              className="flex min-h-11 items-center gap-3 px-1 text-sm"
+              aria-label={`Convert from ${sourceKind} to ${targetKind}`}
+            >
+              <span className="direction-label" key={`from-${sourceKind}`}>
+                {sourceKind}
+              </span>
+              <ArrowRight
+                className="size-4 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <span className="direction-label" key={`to-${targetKind}`}>
+                {targetKind}
+              </span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                disabled={busy}
+                onClick={() => {
+                  setReversed((value) => !value);
+                  setAmountTouched(false);
+                  onActionChange();
+                }}
+                aria-label="Reverse conversion direction"
+                className="press ml-auto size-11"
               >
-                From {sourceKind}
-              </Label>
-              <p className="text-xs text-muted-foreground tabular-nums">
-                Balance: {formatBalance(sourceBalance)}{" "}
-                <button
-                  type="button"
-                  onClick={applyMax}
-                  disabled={
-                    busy || sourceBalance === null || sourceBalance <= 0n
-                  }
-                  className="inline-flex min-h-11 min-w-11 items-center justify-center px-2 py-2 font-medium text-foreground underline-offset-4 hover:underline disabled:no-underline disabled:opacity-40"
-                >
-                  Max
-                </button>
-              </p>
-            </div>
+                <ArrowLeftRight aria-hidden="true" />
+              </Button>
+            </fieldset>
+          ) : null}
+          <div className="rounded-lg bg-muted/60 p-4">
+            <Label htmlFor={amountId} className="sr-only">
+              Amount
+            </Label>
             <div className="mt-1 flex items-center gap-2">
               <Input
                 ref={amountRef}
@@ -272,6 +280,19 @@ export function Exchange({
                 Test USD
               </span>
             </div>
+            <div className="flex min-h-11 items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span>
+                {sourceKind} balance: {formatBalance(sourceBalance)}
+              </span>
+              <button
+                type="button"
+                onClick={applyMax}
+                disabled={busy || sourceBalance === null || sourceBalance <= 0n}
+                className="min-h-11 min-w-11 rounded-md px-2 font-medium text-foreground hover:bg-accent disabled:opacity-40"
+              >
+                Max
+              </button>
+            </div>
             {amountError ? (
               <p
                 id={amountErrorId}
@@ -283,50 +304,7 @@ export function Exchange({
             ) : null}
           </div>
 
-          {mode === "convert" ? (
-            <>
-              <div className="relative z-10 -my-5 flex justify-center">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  disabled={busy}
-                  onClick={() => {
-                    setReversed((value) => !value);
-                    setAmountTouched(false);
-                  }}
-                  aria-label="Reverse conversion direction"
-                  className="press min-h-11 min-w-11 rounded-full border-4 border-card bg-card"
-                >
-                  <ArrowUpDown aria-hidden="true" />
-                </Button>
-              </div>
-
-              <div className="rounded-lg border bg-muted/60 p-4">
-                <div className="flex min-h-11 items-center justify-between gap-3">
-                  <p className="text-sm text-muted-foreground">
-                    To {targetKind}
-                  </p>
-                  <p className="text-xs text-muted-foreground tabular-nums">
-                    Balance: {formatBalance(targetBalance)}
-                  </p>
-                </div>
-                <div className="mt-1 flex min-h-14 items-center gap-2">
-                  <output
-                    id={outputId}
-                    htmlFor={amountId}
-                    aria-live="polite"
-                    className="min-w-0 flex-1 overflow-x-auto text-4xl md:text-4xl font-semibold tabular-nums"
-                  >
-                    {outputValue === "" ? "0" : outputValue}
-                  </output>
-                  <span className="shrink-0 text-sm text-muted-foreground">
-                    Test USD
-                  </span>
-                </div>
-              </div>
-            </>
-          ) : (
+          {mode === "send" ? (
             <div className="space-y-2">
               <Label
                 htmlFor={recipientId}
@@ -365,7 +343,7 @@ export function Exchange({
                 </p>
               ) : null}
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="mt-4">
@@ -431,9 +409,12 @@ export function Exchange({
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              {displayLabel}{" "}
+              {mode === "send" ? "Send" : "Make"}{" "}
               {parsed !== null && parsed > 0n ? formatBaseUnits(parsed) : ""}{" "}
               Test USD
+              {mode === "convert"
+                ? ` ${reversed ? "public" : "confidential"}`
+                : ""}
             </DialogTitle>
             <DialogDescription>
               {mode === "send"

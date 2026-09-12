@@ -1,8 +1,4 @@
-import {
-  address,
-  generateKeyPairSigner,
-  type KeyPairSigner,
-} from "@solana/kit";
+import { address, generateKeyPairSigner } from "@solana/kit";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Toaster, toast } from "sonner";
 import { AccountDialog, WalletDialog } from "@/components/Account";
@@ -48,7 +44,6 @@ import {
 
 interface TestConnection {
   kind: "test";
-  signer: KeyPairSigner;
   session: Session;
 }
 
@@ -230,7 +225,7 @@ export function App() {
     try {
       const signer = await generateKeyPairSigner();
       const session = createSession(manifest, signer, signer.address);
-      setConnection({ kind: "test", signer, session });
+      setConnection({ kind: "test", session });
       setWalletDialogOpen(false);
       setStatus({ state: "working", message: "Funding test wallet" });
       await requestFunds(signer.address.toString());
@@ -324,7 +319,6 @@ export function App() {
       setStatus({
         state: "done",
         message,
-        detail: signature,
       });
       notifySuccess(message, signature);
       await refreshBalances(session);
@@ -360,7 +354,6 @@ export function App() {
         setStatus({
           state: "done",
           message: "Payment accepted",
-          detail: signature,
         });
         notifySuccess("Payment accepted", signature);
       } else {
@@ -464,6 +457,8 @@ export function App() {
 
         {connection ? (
           <AccountDialog
+            publicBalance={unwrapped}
+            confidentialBalance={balances.confidential}
             open={accountOpen}
             onOpenChange={setAccountOpen}
             address={connectedAddress ?? ""}

@@ -1,5 +1,5 @@
 // Keep token amounts exact by parsing decimal strings directly to bigint.
-export const TOKEN_DECIMALS = 6;
+const TOKEN_DECIMALS = 6;
 
 const MAX_INPUT_LENGTH = 64;
 
