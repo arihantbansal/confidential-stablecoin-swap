@@ -72,10 +72,9 @@ The roundtrip wraps, deposits, sends, withdraws, and unwraps all three assets, t
 ## Limits
 
 - This project has not been independently audited or formally verified. It is a local prototype.
-- The vendored wrapper revision and local changes are recorded in [PROVENANCE.json](vendor/PROVENANCE.json). Upstream audits do not establish the safety of this app or deployment.
 - USDC and USDT mint copies retain issuer freeze controls. CASH retains its permanent delegate. The wrappers also retain freeze controls.
 - Local funding uses a development-only cheatcode endpoint on the localhost app.
 
 ## License
 
-[MIT](LICENSE). Vendored Token Wrap code retains its [upstream license](vendor/token-wrap/LICENSE). Geist uses the [SIL Open Font License](web/public/fonts/Geist-LICENSE.txt). [Token logo sources](web/src/lib/token-icons.ts) are recorded in the code.
+[MIT](LICENSE). Token Wrap is vendored from [commit cc01d39](https://github.com/solana-program/token-wrap/tree/cc01d3988fb300628ee4d04f4af93d16c8d56732), with the program ID changed for local deployment. It retains its [upstream license](vendor/token-wrap/LICENSE). Geist uses the [SIL Open Font License](web/public/fonts/Geist-LICENSE.txt). [Token logo sources](web/src/lib/token-icons.ts) are recorded in the code.

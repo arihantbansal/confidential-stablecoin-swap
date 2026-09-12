@@ -16,6 +16,7 @@ use {
     spl_associated_token_account_interface::address::get_associated_token_address_with_program_id,
 };
 
+// Program ID changed from upstream for local Surfpool deployment.
 solana_pubkey::declare_id!("GxEQHbmE777LzkJjLX2EV7t1n37bZq1gD47gC8Xp9i9m");
 
 const WRAPPED_MINT_SEED: &[u8] = br"mint";

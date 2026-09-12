@@ -2,7 +2,7 @@
 
 ## Implementation
 
-- Use native Token-2022 confidential transfers and the official proof SDK. Keep wrapper changes recorded in `vendor/PROVENANCE.json`.
+- Use native Token-2022 confidential transfers and the official proof SDK. Record vendored source revisions and local changes in the README.
 - Run transactions only against the local Surfpool endpoint. A fork's remote datasource is read-only.
 - Preserve signature, blockhash, and proof verification. Seed local fixtures before the lifecycle; use real instructions during the acceptance test.
 - Keep keys out of source, browser-served directories, logs, and plaintext browser persistence. Local test identities have no monetary value.
@@ -22,4 +22,4 @@
 
 ## References
 
-Use the README for setup, usage, and limitations. Check `vendor/PROVENANCE.json` for the upstream revision and local changes. Support audit and deployment-verification claims with evidence for the exact build.
+Use the README for setup, usage, and limitations. Support audit and deployment-verification claims with evidence for the exact build.
